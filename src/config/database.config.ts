@@ -1,6 +1,8 @@
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
+import { DataSourceOptions } from 'typeorm';
+import { ALL_ENTITIES } from '../database/entities';
 
-export function buildDatabaseOptions(): TypeOrmModuleOptions {
+export function buildDataSourceOptions(): DataSourceOptions {
   const isProd = process.env.NODE_ENV === 'production';
   const url = process.env.DATABASE_URL;
 
@@ -12,11 +14,17 @@ export function buildDatabaseOptions(): TypeOrmModuleOptions {
   return {
     type: 'postgres',
     url,
-    // Entities will be registered via feature modules as they are introduced.
-    autoLoadEntities: true,
     synchronize: false,
     logging: isProd ? ['error', 'warn'] : ['error', 'warn', 'schema'],
     migrationsTableName: 'typeorm_migrations',
     migrations: ['dist/database/migrations/*.js'],
+  };
+}
+
+export function buildDatabaseOptions(): TypeOrmModuleOptions {
+  return {
+    ...buildDataSourceOptions(),
+    entities: ALL_ENTITIES,
+    autoLoadEntities: true,
   };
 }

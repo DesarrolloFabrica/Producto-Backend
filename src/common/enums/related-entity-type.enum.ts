@@ -1,0 +1,7 @@
+export enum RelatedEntityType {
+  PROJECT = 'PROJECT',
+  SEMESTER = 'SEMESTER',
+  SUBJECT = 'SUBJECT',
+  TOPIC = 'TOPIC',
+  CHECKLIST_ITEM = 'CHECKLIST_ITEM',
+}

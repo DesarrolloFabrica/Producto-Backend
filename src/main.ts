@@ -1,3 +1,4 @@
+import './env';
 import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -21,6 +22,7 @@ async function bootstrap() {
     new ValidationPipe({
       whitelist: true,
       transform: true,
+      forbidNonWhitelisted: true,
     }),
   );
 
@@ -28,6 +30,14 @@ async function bootstrap() {
     .setTitle('Producto-Backend')
     .setDescription('API Backend (NestJS + TypeORM + PostgreSQL)')
     .setVersion('0.1.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+      },
+      'bearer',
+    )
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);

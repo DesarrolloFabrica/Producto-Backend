@@ -1,0 +1,110 @@
+﻿[
+    {
+        "Step":  "3",
+        "Test":  "GET /health",
+        "OK":  true,
+        "Detail":  "{\"status\":\"ok\",\"service\":\"producto-backend\"}"
+    },
+    {
+        "Step":  "4",
+        "Test":  "POST /auth/login (3 roles)",
+        "OK":  true,
+        "Detail":  "tokens obtenidos"
+    },
+    {
+        "Step":  "4",
+        "Test":  "GET /auth/me (ADMIN)",
+        "OK":  true,
+        "Detail":  "admin@local"
+    },
+    {
+        "Step":  "5",
+        "Test":  "GET /users (ADMIN)",
+        "OK":  true,
+        "Detail":  "count=3"
+    },
+    {
+        "Step":  "5",
+        "Test":  "GET /users (PRODUCT 403)",
+        "OK":  true,
+        "Detail":  "status=403"
+    },
+    {
+        "Step":  "5",
+        "Test":  "GET /users/me/profile (PRODUCT)",
+        "OK":  true,
+        "Detail":  "product@local"
+    },
+    {
+        "Step":  "6",
+        "Test":  "POST /projects",
+        "OK":  true,
+        "Detail":  "id=9c672a11-ee38-419a-88e5-8cd68d0e036d"
+    },
+    {
+        "Step":  "6",
+        "Test":  "GET /projects",
+        "OK":  true,
+        "Detail":  "count=4"
+    },
+    {
+        "Step":  "6",
+        "Test":  "GET /projects/:id estructura",
+        "OK":  true,
+        "Detail":  "subjectChecklist=20 topicChecklist=4"
+    },
+    {
+        "Step":  "7",
+        "Test":  "PATCH checklist FABRICA",
+        "OK":  true,
+        "Detail":  "item=ENTREGADO progress=6"
+    },
+    {
+        "Step":  "8",
+        "Test":  "POST /subjects/:id/submit",
+        "OK":  true,
+        "Detail":  "subject=IN_REVIEW project=IN_REVIEW"
+    },
+    {
+        "Step":  "9",
+        "Test":  "POST/GET observations",
+        "OK":  true,
+        "Detail":  "obsId=eca0a230-fbf8-4fe2-985b-72f9e98c9d21"
+    },
+    {
+        "Step":  "9",
+        "Test":  "POST approve con obs ABIERTA",
+        "OK":  true,
+        "Detail":  "status=400"
+    },
+    {
+        "Step":  "10",
+        "Test":  "mark-correction-applied",
+        "OK":  true,
+        "Detail":  "EN_CORRECCION"
+    },
+    {
+        "Step":  "10",
+        "Test":  "validate observation",
+        "OK":  true,
+        "Detail":  "RESUELTA"
+    },
+    {
+        "Step":  "11",
+        "Test":  "POST /subjects/:id/approve",
+        "OK":  true,
+        "Detail":  "APPROVED"
+    },
+    {
+        "Step":  "12",
+        "Test":  "mark-delivered + close",
+        "OK":  true,
+        "Detail":  "final=CLOSED"
+    },
+    {
+        "Step":  "13",
+        "Test":  "GET /notifications",
+        "OK":  true,
+        "Detail":  "count=6"
+    }
+]
