@@ -1,3 +1,4 @@
+// src/auth/auth.module.ts  
 import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
