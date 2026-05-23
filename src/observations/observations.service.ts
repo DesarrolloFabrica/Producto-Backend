@@ -10,6 +10,7 @@ import { AuditAction } from '../common/enums/audit-action.enum';
 import { ObservationStatus } from '../common/enums/observation-status.enum';
 import { ProjectStatus } from '../common/enums/project-status.enum';
 import { RelatedEntityType } from '../common/enums/related-entity-type.enum';
+import { NotificationEventType } from '../common/enums/notification-event-type.enum';
 import { NotificationType } from '../common/enums/notification-type.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -37,7 +38,10 @@ import { UpdateObservationStatusResponseDto } from './dto/update-observation-sta
 import { ObservationMessageEntity } from './observation-message.entity';
 import { ObservationEntity } from './observation.entity';
 
-const BLOCKING_STATUSES = [ObservationStatus.ABIERTA, ObservationStatus.EN_CORRECCION];
+// Only fully open observations block delivery/review. Once Fábrica marks a correction
+// as applied (EN_CORRECCION), Product must validate it, but the item can re-enter review.
+const BLOCKING_STATUSES = [ObservationStatus.ABIERTA];
+const UNRESOLVED_STATUSES = [ObservationStatus.ABIERTA, ObservationStatus.EN_CORRECCION];
 
 @Injectable()
 export class ObservationsService {
@@ -72,11 +76,26 @@ export class ObservationsService {
     subjectId: string,
     manager?: EntityManager,
   ): Promise<boolean> {
+    return await this.hasObservationsForSubjectByStatuses(subjectId, BLOCKING_STATUSES, manager);
+  }
+
+  async hasUnresolvedObservationsForSubject(
+    subjectId: string,
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    return await this.hasObservationsForSubjectByStatuses(subjectId, UNRESOLVED_STATUSES, manager);
+  }
+
+  private async hasObservationsForSubjectByStatuses(
+    subjectId: string,
+    statuses: ObservationStatus[],
+    manager?: EntityManager,
+  ): Promise<boolean> {
     const repo = manager ? manager.getRepository(ObservationEntity) : this.observationRepo;
 
     const count = await repo
       .createQueryBuilder('o')
-      .where('o.status IN (:...blocking)', { blocking: BLOCKING_STATUSES })
+      .where('o.status IN (:...statuses)', { statuses })
       .andWhere(
         new Brackets((qb) => {
           qb.where('o.subjectId = :subjectId', { subjectId })
@@ -194,6 +213,13 @@ export class ObservationsService {
             message: `Se registró una observación en el proyecto ${project.program}.`,
             entityType: 'OBSERVATION',
             entityId: observation.id,
+            eventType: NotificationEventType.OBSERVATION_CREATED,
+            projectId: project.id,
+            subjectId: dto.subjectId ?? undefined,
+            actionUrl: dto.subjectId
+              ? `/subjects/${dto.subjectId}?focus=correction`
+              : `/projects/${project.id}`,
+            severity: 'attention',
           },
           manager,
         );
@@ -206,6 +232,12 @@ export class ObservationsService {
             message: `Fábrica registró una observación en ${project.program}.`,
             entityType: 'OBSERVATION',
             entityId: observation.id,
+            eventType: NotificationEventType.OBSERVATION_CREATED,
+            projectId: project.id,
+            subjectId: dto.subjectId ?? undefined,
+            actionUrl: dto.subjectId
+              ? `/subjects/${dto.subjectId}`
+              : `/projects/${project.id}`,
           },
           manager,
         );
@@ -342,6 +374,99 @@ export class ObservationsService {
     );
   }
 
+  async reopen(
+    observationId: string,
+    reason: string,
+    user: UserEntity,
+  ): Promise<UpdateObservationStatusResponseDto> {
+    if (user.role !== UserRole.PRODUCT && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException();
+    }
+
+    return await this.dataSource.transaction(async (manager) => {
+      const observationRepo = manager.getRepository(ObservationEntity);
+      const observation = await observationRepo.findOne({
+        where: { id: observationId },
+        relations: {
+          project: { productOwner: true, factoryOwner: true },
+          subject: { semester: true },
+        },
+      });
+
+      if (!observation) {
+        throw new NotFoundException('Observation not found');
+      }
+
+      this.projectsService.assertCanModifyProject(observation.project, user);
+
+      if (observation.status !== ObservationStatus.EN_CORRECCION &&
+          observation.status !== ObservationStatus.RESUELTA) {
+        throw new BadRequestException(
+          'Observation must be in status EN_CORRECCION or RESUELTA to reopen it',
+        );
+      }
+
+      const previousStatus = observation.status;
+      observation.status = ObservationStatus.ABIERTA;
+      observation.text = reason.trim();
+      observation.resolvedAt = null;
+      observation.resolvedBy = null;
+      await observationRepo.save(observation);
+
+      await this.statusHistoryService.recordIfChanged(
+        {
+          entityType: 'OBSERVATION',
+          entityId: observation.id,
+          fromStatus: previousStatus,
+          toStatus: ObservationStatus.ABIERTA,
+          changedById: user.id,
+        },
+        manager,
+      );
+
+      await this.auditService.createLog(
+        {
+          entityType: 'OBSERVATION',
+          entityId: observation.id,
+          action: AuditAction.OBSERVATION_STATUS_CHANGE,
+          userId: user.id,
+          beforeJson: { status: previousStatus },
+          afterJson: { status: ObservationStatus.ABIERTA, text: observation.text, reopened: true },
+        },
+        manager,
+      );
+
+      await this.notificationsService.notifyFactoryOwner(
+        observation.project.factoryOwner?.id,
+        {
+          type: NotificationType.CRITICAL,
+          title: 'Corrección reabierta por Product',
+          message: 'Product solicitó un nuevo ajuste sobre una observación ya corregida.',
+          entityType: 'OBSERVATION',
+          entityId: observation.id,
+          eventType: NotificationEventType.OBSERVATION_REOPENED,
+          projectId: observation.project.id,
+          subjectId: observation.subjectId ?? undefined,
+          actionUrl: observation.subjectId
+            ? `/subjects/${observation.subjectId}?focus=correction`
+            : `/projects/${observation.project.id}`,
+          severity: 'critical',
+        },
+        manager,
+      );
+
+      const workflow = await this.recalculateAfterObservationChange(observation, user.id, manager);
+      const full = await this.findOneById(observation.id, user, manager);
+
+      return {
+        observation: full,
+        previousStatus,
+        currentStatus: ObservationStatus.ABIERTA,
+        ...workflow,
+      };
+    });
+  }
+
   private async transitionObservation(
     observationId: string,
     user: UserEntity,
@@ -411,6 +536,13 @@ export class ObservationsService {
             message: 'Fábrica marcó una observación como corregida. Valida cuando corresponda.',
             entityType: 'OBSERVATION',
             entityId: observation.id,
+            eventType: NotificationEventType.OBSERVATION_CORRECTION_APPLIED,
+            projectId: observation.project.id,
+            subjectId: observation.subjectId ?? undefined,
+            actionUrl: observation.subjectId
+              ? `/subjects/${observation.subjectId}`
+              : `/projects/${observation.project.id}`,
+            severity: 'attention',
           },
           manager,
         );
@@ -424,6 +556,12 @@ export class ObservationsService {
             message: 'Producto validó una observación como resuelta.',
             entityType: 'OBSERVATION',
             entityId: observation.id,
+            eventType: NotificationEventType.OBSERVATION_VALIDATED,
+            projectId: observation.project.id,
+            subjectId: observation.subjectId ?? undefined,
+            actionUrl: observation.subjectId
+              ? `/subjects/${observation.subjectId}`
+              : `/projects/${observation.project.id}`,
           },
           manager,
         );

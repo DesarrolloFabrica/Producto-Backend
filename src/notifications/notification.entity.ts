@@ -7,12 +7,14 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { NotificationEventType } from '../common/enums/notification-event-type.enum';
 import { NotificationType } from '../common/enums/notification-type.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { UserEntity } from '../users/user.entity';
 
 @Entity({ name: 'notifications' })
 @Index(['entityType', 'entityId'])
+@Index(['projectId', 'subjectId', 'eventType'])
 export class NotificationEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -52,6 +54,31 @@ export class NotificationEntity {
 
   @Column({ type: 'varchar', length: 36, nullable: true })
   entityId!: string | null;
+
+  @Column({
+    type: 'enum',
+    enum: NotificationEventType,
+    enumName: 'notification_event_type',
+    nullable: true,
+  })
+  eventType!: NotificationEventType | null;
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  projectId!: string | null;
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  subjectId!: string | null;
+
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  actionUrl!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  readAt!: Date | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  severity!: string | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

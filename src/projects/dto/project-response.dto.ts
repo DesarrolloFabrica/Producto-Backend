@@ -21,6 +21,35 @@ export class ProjectOwnerDto {
   role!: UserRole;
 }
 
+export class SubjectSummaryDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty()
+  name!: string;
+
+  @ApiProperty({ enum: SubjectStatus })
+  status!: SubjectStatus;
+
+  @ApiProperty()
+  semesterNumber!: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  expectedDeliveryDate!: Date | null;
+
+  @ApiProperty()
+  progress!: number;
+
+  @ApiProperty()
+  openObservationsCount!: number;
+
+  @ApiProperty()
+  correctionSentCount!: number;
+
+  @ApiProperty()
+  updatedAt!: Date;
+}
+
 export class ProjectListItemDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
@@ -57,6 +86,9 @@ export class ProjectListItemDto {
 
   @ApiProperty()
   createdAt!: Date;
+
+  @ApiPropertyOptional({ type: [SubjectSummaryDto] })
+  subjectsSummary?: SubjectSummaryDto[];
 }
 
 export class ProjectLinkDto {
@@ -134,6 +166,9 @@ export class SubjectDetailDto {
 
   @ApiProperty()
   name!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  expectedDeliveryDate!: Date | null;
 
   @ApiProperty({ enum: SubjectStatus })
   status!: SubjectStatus;

@@ -25,6 +25,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserEntity } from '../users/user.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ProjectDetailDto, ProjectListItemDto } from './dto/project-response.dto';
+import { AddSemesterDto } from '../semesters/dto/add-semester.dto';
 import { ObservationResponseDto } from '../observations/dto/observation-response.dto';
 import { ObservationsService } from '../observations/observations.service';
 import { ProjectActionResponseDto } from './dto/project-action-response.dto';
@@ -136,6 +137,22 @@ export class ProjectsController {
     @CurrentUser() user: UserEntity,
   ): Promise<ProjectDetailDto> {
     return await this.projectsService.findOne(id, user);
+  }
+
+  @Post(':projectId/semesters')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Agregar semestre a un proyecto existente' })
+  @ApiOkResponse({ type: ProjectDetailDto })
+  @ApiUnauthorizedResponse()
+  @ApiForbiddenResponse()
+  @ApiNotFoundResponse()
+  async addSemester(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() dto: AddSemesterDto,
+    @CurrentUser() user: UserEntity,
+  ): Promise<ProjectDetailDto> {
+    return await this.projectsService.addSemesterToProject(projectId, dto, user);
   }
 
   @Post()

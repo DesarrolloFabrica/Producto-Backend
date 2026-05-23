@@ -13,6 +13,7 @@ import { ChecklistStatus } from '../common/enums/checklist-status.enum';
 import { ProjectStatus } from '../common/enums/project-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { SubjectStatus } from '../common/enums/subject-status.enum';
+import { NotificationEventType } from '../common/enums/notification-event-type.enum';
 import { NotificationType } from '../common/enums/notification-type.enum';
 import { UserStatus } from '../common/enums/user-status.enum';
 import { AuditService } from '../audit/audit.service';
@@ -41,11 +42,15 @@ import {
   ProjectOwnerDto,
   SemesterDetailDto,
   SubjectDetailDto,
+  SubjectSummaryDto,
   TopicDetailDto,
 } from './dto/project-response.dto';
 import { LinkResourceEntity } from './link-resource.entity';
 import { MailService } from '../mail/mail.service';
+import { AddSemesterDto } from '../semesters/dto/add-semester.dto';
 import { ProjectEntity } from './project.entity';
+import { ObservationEntity } from '../observations/observation.entity';
+import { loadProductObservationCountsBySubject } from '../observations/observation-subject-query.util';
 
 @Injectable()
 export class ProjectsService {
@@ -159,7 +164,97 @@ export class ProjectsService {
     const projects = await this.buildProjectQueryByRole(user)
       .orderBy('project.createdAt', 'DESC')
       .getMany();
-    return projects.map((p) => this.toListItem(p));
+
+    const includeSubjectsSummary =
+      user.role === UserRole.FABRICA ||
+      user.role === UserRole.ADMIN ||
+      user.role === UserRole.PRODUCT;
+    const summariesByProject = includeSubjectsSummary
+      ? await this.loadSubjectsSummaryForProjects(projects.map((p) => p.id))
+      : new Map<string, SubjectSummaryDto[]>();
+
+    return projects.map((p) => ({
+      ...this.toListItem(p),
+      ...(includeSubjectsSummary
+        ? { subjectsSummary: summariesByProject.get(p.id) ?? [] }
+        : {}),
+    }));
+  }
+
+  private async loadSubjectsSummaryForProjects(
+    projectIds: string[],
+  ): Promise<Map<string, SubjectSummaryDto[]>> {
+    const result = new Map<string, SubjectSummaryDto[]>();
+    if (!projectIds.length) return result;
+
+    const rows = await this.subjectRepo
+      .createQueryBuilder('subject')
+      .innerJoin('subject.semester', 'semester')
+      .innerJoin('subject.project', 'project')
+      .where('subject.projectId IN (:...projectIds)', { projectIds })
+      .andWhere('subject.deletedAt IS NULL')
+      .select('subject.id', 'id')
+      .addSelect('subject.name', 'name')
+      .addSelect('subject.status', 'status')
+      .addSelect('subject.progress', 'progress')
+      .addSelect('subject.expectedDeliveryDate', 'expectedDeliveryDate')
+      .addSelect('subject.updatedAt', 'updatedAt')
+      .addSelect('subject.projectId', 'projectId')
+      .addSelect('semester.semesterNumber', 'semesterNumber')
+      .addSelect('semester.factoryExpectedDate', 'semesterFactoryExpectedDate')
+      .addSelect('project.expectedDeliveryDate', 'projectExpectedDeliveryDate')
+      .orderBy('subject.updatedAt', 'DESC')
+      .getRawMany<{
+        id: string;
+        name: string;
+        status: SubjectStatus;
+        progress: number;
+        expectedDeliveryDate: Date | null;
+        updatedAt: Date;
+        projectId: string;
+        semesterNumber: number;
+        semesterFactoryExpectedDate: Date | null;
+        projectExpectedDeliveryDate: Date;
+      }>();
+
+    const subjectIds = rows.map((s) => s.id);
+    let obsCountMap = new Map<
+      string,
+      { open: number; correctionSent: number }
+    >();
+
+    if (subjectIds.length) {
+      obsCountMap = await loadProductObservationCountsBySubject(
+        this.dataSource.getRepository(ObservationEntity),
+        subjectIds,
+      );
+    }
+
+    for (const row of rows) {
+      const obsCounts = obsCountMap.get(row.id) ?? {
+        open: 0,
+        correctionSent: 0,
+      };
+      const summary: SubjectSummaryDto = {
+        id: row.id,
+        name: row.name,
+        status: row.status,
+        semesterNumber: row.semesterNumber,
+        expectedDeliveryDate:
+          row.expectedDeliveryDate ??
+          row.semesterFactoryExpectedDate ??
+          row.projectExpectedDeliveryDate,
+        progress: row.progress,
+        openObservationsCount: obsCounts.open,
+        correctionSentCount: obsCounts.correctionSent,
+        updatedAt: row.updatedAt,
+      };
+      const list = result.get(row.projectId) ?? [];
+      list.push(summary);
+      result.set(row.projectId, list);
+    }
+
+    return result;
   }
 
   async findOne(id: string, user: UserEntity): Promise<ProjectDetailDto> {
@@ -251,14 +346,15 @@ export class ProjectsService {
         );
 
         for (const subjectDto of semesterDto.subjects) {
-          const subject = await subjectRepository.save(
-            subjectRepository.create({
-              project: { id: project.id },
-              semester: { id: semester.id },
-              name: subjectDto.name,
-              progress: 0,
-            }),
-          );
+            const subject = await subjectRepository.save(
+              subjectRepository.create({
+                project: { id: project.id },
+                semester: { id: semester.id },
+                name: subjectDto.name,
+                expectedDeliveryDate: new Date(semesterDto.factoryExpectedDate),
+                progress: 0,
+              }),
+            );
 
           for (const label of SUBJECT_CHECKLIST_LABELS) {
             await checklistRepository.save(
@@ -325,6 +421,152 @@ export class ProjectsService {
 
     const detail = await this.findOne(projectId, user);
     void this.mailService.sendProductRequestCreatedEmail(detail);
+    return detail;
+  }
+
+  async addSemesterToProject(projectId: string, dto: AddSemesterDto, user: UserEntity): Promise<ProjectDetailDto> {
+    if (user.role !== UserRole.PRODUCT && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only PRODUCT or ADMIN can modify semesters');
+    }
+
+    const changeSummary = {
+      changeType: 'SEMESTER_ADDED',
+      semesterNumber: dto.semesterNumber,
+      subjectsAdded: dto.subjects.map((subject) => ({
+        name: subject.name.trim(),
+        topics: subject.topics.map((topic) => topic.trim()).filter(Boolean),
+      })),
+      changeReason: dto.changeReason?.trim() || null,
+      changedAt: new Date().toISOString(),
+      changedBy: user.id,
+    };
+
+    await this.dataSource.transaction(async (manager) => {
+      const projectRepo = manager.getRepository(ProjectEntity);
+      const semesterRepo = manager.getRepository(SemesterEntity);
+      const subjectRepo = manager.getRepository(SubjectEntity);
+      const topicRepo = manager.getRepository(TopicEntity);
+      const checklistRepo = manager.getRepository(ChecklistItemEntity);
+
+      const project = await projectRepo.findOne({
+        where: { id: projectId, deletedAt: IsNull() },
+        relations: { productOwner: true, factoryOwner: true },
+      });
+      if (!project) throw new NotFoundException('Project not found');
+
+      this.assertCanManageAsProductOwner(project, user);
+      this.assertCanModifyProject(project, user);
+
+      const existingSemester = await semesterRepo.findOne({
+        where: { project: { id: projectId }, semesterNumber: dto.semesterNumber, deletedAt: IsNull() },
+      });
+      if (existingSemester) {
+        throw new BadRequestException(`Semester ${dto.semesterNumber} already exists in this project`);
+      }
+
+      const currentSemesterCount = await semesterRepo.count({
+        where: { project: { id: project.id }, deletedAt: IsNull() },
+      });
+
+      const semester = await semesterRepo.save(
+        semesterRepo.create({
+          project: { id: project.id },
+          semesterNumber: dto.semesterNumber,
+          factoryExpectedDate: new Date(dto.factoryExpectedDate),
+        }),
+      );
+
+      for (const subjectDto of dto.subjects) {
+        const subject = await subjectRepo.save(
+          subjectRepo.create({
+            project: { id: project.id },
+            semester: { id: semester.id },
+            name: subjectDto.name.trim(),
+            expectedDeliveryDate: new Date(dto.factoryExpectedDate),
+            progress: 0,
+            status: SubjectStatus.PENDING,
+          }),
+        );
+
+        for (const label of SUBJECT_CHECKLIST_LABELS) {
+          await checklistRepo.save(
+            checklistRepo.create({
+              subject: { id: subject.id },
+              topic: null,
+              label,
+              status: ChecklistStatus.PENDIENTE,
+              ownerRole: UserRole.PRODUCT,
+            }),
+          );
+        }
+
+        for (let i = 0; i < subjectDto.topics.length; i++) {
+          const topicName = subjectDto.topics[i].trim();
+          const topic = await topicRepo.save(
+            topicRepo.create({
+              subject: { id: subject.id },
+              name: topicName,
+              order: i + 1,
+            }),
+          );
+
+          for (const label of TOPIC_CHECKLIST_LABELS) {
+            await checklistRepo.save(
+              checklistRepo.create({
+                subject: { id: subject.id },
+                topic: { id: topic.id },
+                label,
+                status: ChecklistStatus.PENDIENTE,
+                ownerRole: UserRole.FABRICA,
+              }),
+            );
+          }
+        }
+      }
+
+      await this.auditService.createLog(
+        {
+          entityType: 'PROJECT',
+          entityId: project.id,
+          action: AuditAction.UPDATE,
+          userId: user.id,
+          beforeJson: { semesterCount: currentSemesterCount },
+          afterJson: changeSummary,
+        },
+        manager,
+      );
+
+      await this.notificationsService.notifyFactoryOwner(
+        project.factoryOwner?.id,
+        {
+          type: NotificationType.ACTION,
+          title: 'Solicitud modificada',
+          message: `Producto agregó el semestre ${dto.semesterNumber} a ${project.program}.`,
+          entityType: 'PROJECT',
+          entityId: project.id,
+          eventType: NotificationEventType.PROJECT_MODIFIED,
+          projectId: project.id,
+          actionUrl: `/projects/${project.id}`,
+          severity: 'attention',
+        },
+        manager,
+      );
+
+      await this.progressService.calculateProjectProgress(project.id, manager);
+    });
+
+    const detail = await this.findOne(projectId, user);
+    void this.mailService.sendProductRequestUpdatedEmail(detail, {
+      changeType: 'SEMESTER_ADDED',
+      description: `Semestre ${dto.semesterNumber} agregado`,
+      details: [
+        `Semestre ${dto.semesterNumber}`,
+        ...dto.subjects.map((subject) => `Asignatura: ${subject.name.trim()} (${subject.topics.map((topic) => topic.trim()).join(', ')})`),
+      ],
+      changeReason: dto.changeReason?.trim() || null,
+      changedBy: `${user.name} <${user.email}>`,
+      changedAt: changeSummary.changedAt,
+    });
     return detail;
   }
 
@@ -464,12 +706,16 @@ export class ProjectsService {
           };
         });
 
-        return {
-          id: subject.id,
-          name: subject.name,
-          status: subject.status,
-          progress: subject.progress,
-          topics: topicDetails,
+          return {
+            id: subject.id,
+            name: subject.name,
+            expectedDeliveryDate:
+              subject.expectedDeliveryDate ??
+              semester.factoryExpectedDate ??
+              project.expectedDeliveryDate,
+            status: subject.status,
+            progress: subject.progress,
+            topics: topicDetails,
           checklist: subjectChecklist.map((item) => this.toChecklistItemWithContext(item, subject.id, null)),
           createdAt: subject.createdAt,
           updatedAt: subject.updatedAt,
@@ -586,11 +832,14 @@ export class ProjectsService {
         await this.notificationsService.notifyUser(
           project.productOwner.id,
           {
-            type: NotificationType.ACTION,
+            type: NotificationType.INFO,
             title: 'Proyecto entregado',
             message: 'El proyecto fue marcado como entregado.',
             entityType: 'PROJECT',
             entityId: projectId,
+            eventType: NotificationEventType.PROJECT_DELIVERED,
+            projectId,
+            actionUrl: `/projects/${projectId}`,
           },
           manager,
         );
@@ -604,6 +853,9 @@ export class ProjectsService {
           message: `El proyecto ${project.program} (${project.school}) fue marcado como entregado.`,
           entityType: 'PROJECT',
           entityId: projectId,
+          eventType: NotificationEventType.PROJECT_DELIVERED,
+          projectId,
+          actionUrl: `/projects/${projectId}`,
         },
         manager,
       );
@@ -677,6 +929,9 @@ export class ProjectsService {
             message: `El proyecto ${project.program} ha sido cerrado.`,
             entityType: 'PROJECT',
             entityId: projectId,
+            eventType: NotificationEventType.PROJECT_CLOSED,
+            projectId,
+            actionUrl: `/projects/${projectId}`,
           },
           manager,
         );

@@ -1,9 +1,10 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsString, MinLength } from 'class-validator';
 
 export class RejectSubjectDto {
-  @ApiPropertyOptional({ description: 'Motivo del rechazo (no crea observación)' })
-  @IsOptional()
+  @ApiProperty({ description: 'Motivo obligatorio del rechazo y base de la observación automática' })
   @IsString()
+  @IsNotEmpty()
+  @MinLength(5)
   reason?: string;
 }

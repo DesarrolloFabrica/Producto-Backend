@@ -3,6 +3,7 @@ import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { ProjectDetailDto } from '../projects/dto/project-response.dto';
 import { buildProductRequestCreatedEmail } from './templates/product-request-created.template';
+import { buildProductRequestUpdatedEmail, type ProductRequestChangeSummary } from './templates/product-request-updated.template';
 
 export interface SendMailOptions {
   to: string;
@@ -128,6 +129,24 @@ export class MailService {
 
     const { subject, html, text } = buildProductRequestCreatedEmail(project);
 
+    await this.sendMail({ to, subject, html, text });
+  }
+
+  async sendProductRequestUpdatedEmail(
+    project: ProjectDetailDto,
+    changeSummary: ProductRequestChangeSummary,
+  ): Promise<void> {
+    if (!this.isEmailEnabled()) {
+      return;
+    }
+
+    const to = this.getNotifyEmail();
+    if (!to) {
+      this.logger.warn('PRODUCT_REQUEST_NOTIFY_EMAIL no configurado. Correo de modificación omitido.');
+      return;
+    }
+
+    const { subject, html, text } = buildProductRequestUpdatedEmail(project, changeSummary);
     await this.sendMail({ to, subject, html, text });
   }
 }

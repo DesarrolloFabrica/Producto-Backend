@@ -17,6 +17,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserEntity } from '../users/user.entity';
 import { CreateObservationMessageDto } from './dto/create-observation-message.dto';
 import { CreateObservationDto } from './dto/create-observation.dto';
+import { ReopenObservationDto } from './dto/reopen-observation.dto';
 import {
   ObservationMessageResponseDto,
   ObservationResponseDto,
@@ -100,5 +101,21 @@ export class ObservationsController {
     @CurrentUser() user: UserEntity,
   ): Promise<UpdateObservationStatusResponseDto> {
     return await this.observationsService.validate(id, user);
+  }
+
+  @Post('observations/:id/reopen')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Reabrir observación corregida o validada (EN_CORRECCION/RESUELTA → ABIERTA)' })
+  @ApiOkResponse({ type: UpdateObservationStatusResponseDto })
+  @ApiUnauthorizedResponse()
+  @ApiForbiddenResponse()
+  @ApiNotFoundResponse()
+  async reopen(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReopenObservationDto,
+    @CurrentUser() user: UserEntity,
+  ): Promise<UpdateObservationStatusResponseDto> {
+    return await this.observationsService.reopen(id, dto.reason, user);
   }
 }

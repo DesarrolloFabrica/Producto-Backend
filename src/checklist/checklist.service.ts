@@ -67,7 +67,7 @@ export class ChecklistService {
       this.projectsService.assertCanModifyProject(project, user);
 
       const previousStatus = item.status;
-      assertChecklistStatusTransition(user.role, previousStatus, dto.status);
+      assertChecklistStatusTransition(user.role, previousStatus, dto.status, item.ownerRole);
 
       item.status = dto.status;
       item.updatedBy = { id: user.id } as UserEntity;

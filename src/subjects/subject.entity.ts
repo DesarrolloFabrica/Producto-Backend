@@ -35,6 +35,9 @@ export class SubjectEntity {
   @Column({ type: 'varchar', length: 200 })
   name!: string;
 
+  @Column({ type: 'timestamptz', nullable: true })
+  expectedDeliveryDate!: Date | null;
+
   @Index()
   @Column({
     type: 'enum',

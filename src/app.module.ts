@@ -10,6 +10,7 @@ import { ChecklistModule } from './checklist/checklist.module';
 import { ObservationsModule } from './observations/observations.module';
 import { SubjectsModule } from './subjects/subjects.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { FactoryModule } from './factory/factory.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { NotificationsModule } from './notifications/notifications.module';
           ObservationsModule,
           SubjectsModule,
           NotificationsModule,
+          FactoryModule,
         ]
       : []),
   ],

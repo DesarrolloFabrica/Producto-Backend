@@ -103,6 +103,7 @@ export class BusinessDomain20260521130000 implements MigrationInterface {
         "projectId" uuid NOT NULL,
         "semesterId" uuid NOT NULL,
         "name" character varying(200) NOT NULL,
+        "expectedDeliveryDate" timestamptz,
         "status" "subject_status" NOT NULL DEFAULT 'PENDING',
         "progress" integer NOT NULL DEFAULT 0,
         "generalObservations" text,

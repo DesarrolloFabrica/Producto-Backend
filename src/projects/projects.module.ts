@@ -7,10 +7,10 @@ import { ChecklistModule } from '../checklist/checklist.module';
 import { ObservationsModule } from '../observations/observations.module';
 import { SemestersModule } from '../semesters/semesters.module';
 import { SubjectsModule } from '../subjects/subjects.module';
+import { TopicsModule } from '../topics/topics.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { MailModule } from '../mail/mail.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { TopicsModule } from '../topics/topics.module';
 import { UsersModule } from '../users/users.module';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { LinkResourceEntity } from './link-resource.entity';
@@ -29,9 +29,9 @@ import { ProjectsService } from './projects.service';
     UsersModule,
     AuthModule,
     AuditModule,
-    SemestersModule,
+    forwardRef(() => SemestersModule),
     forwardRef(() => SubjectsModule),
-    TopicsModule,
+    forwardRef(() => TopicsModule),
     forwardRef(() => ChecklistModule),
     forwardRef(() => ObservationsModule),
     WorkflowModule,

@@ -8,10 +8,18 @@ const FABRICA_ALLOWED: Partial<Record<ChecklistStatus, ChecklistStatus[]>> = {
   [ChecklistStatus.ENTREGADO]: [ChecklistStatus.EN_PRODUCCION],
 };
 
-const PRODUCT_ALLOWED: Partial<Record<ChecklistStatus, ChecklistStatus[]>> = {
+/** Checklist general de asignatura — ownerRole PRODUCT. */
+const PRODUCT_SUBJECT_ALLOWED: Partial<Record<ChecklistStatus, ChecklistStatus[]>> = {
+  [ChecklistStatus.PENDIENTE]: [ChecklistStatus.APROBADO, ChecklistStatus.RECHAZADO],
+  [ChecklistStatus.APROBADO]: [ChecklistStatus.RECHAZADO, ChecklistStatus.PENDIENTE],
+  [ChecklistStatus.RECHAZADO]: [ChecklistStatus.APROBADO, ChecklistStatus.PENDIENTE],
+};
+
+/** Checklist por tema — ownerRole FABRICA, revisado por Product tras ENTREGADO. */
+const PRODUCT_FACTORY_ALLOWED: Partial<Record<ChecklistStatus, ChecklistStatus[]>> = {
   [ChecklistStatus.ENTREGADO]: [ChecklistStatus.APROBADO, ChecklistStatus.RECHAZADO],
-  [ChecklistStatus.RECHAZADO]: [ChecklistStatus.APROBADO],
-  [ChecklistStatus.APROBADO]: [ChecklistStatus.RECHAZADO],
+  [ChecklistStatus.APROBADO]: [ChecklistStatus.RECHAZADO, ChecklistStatus.ENTREGADO],
+  [ChecklistStatus.RECHAZADO]: [ChecklistStatus.APROBADO, ChecklistStatus.ENTREGADO],
 };
 
 const PRODUCT_FORBIDDEN_TARGETS = new Set<ChecklistStatus>([ChecklistStatus.EN_PRODUCCION]);
@@ -20,6 +28,7 @@ export function assertChecklistStatusTransition(
   role: UserRole,
   from: ChecklistStatus,
   to: ChecklistStatus,
+  ownerRole?: UserRole,
 ): void {
   if (from === to) {
     throw new BadRequestException('Status is already set to the requested value');
@@ -28,6 +37,9 @@ export function assertChecklistStatusTransition(
   if (role === UserRole.ADMIN) return;
 
   if (role === UserRole.FABRICA) {
+    if (ownerRole === UserRole.PRODUCT) {
+      throw new BadRequestException('FABRICA cannot update PRODUCT checklist items');
+    }
     const allowed = FABRICA_ALLOWED[from] ?? [];
     if (!allowed.includes(to)) {
       throw new BadRequestException(
@@ -44,7 +56,9 @@ export function assertChecklistStatusTransition(
     if (PRODUCT_FORBIDDEN_TARGETS.has(to)) {
       throw new BadRequestException('PRODUCT cannot set EN_PRODUCCION manually');
     }
-    const allowed = PRODUCT_ALLOWED[from] ?? [];
+    const allowedMap =
+      ownerRole === UserRole.PRODUCT ? PRODUCT_SUBJECT_ALLOWED : PRODUCT_FACTORY_ALLOWED;
+    const allowed = allowedMap[from] ?? [];
     if (!allowed.includes(to)) {
       throw new BadRequestException(
         `PRODUCT cannot transition checklist from ${from} to ${to}`,
