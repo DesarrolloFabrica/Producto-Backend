@@ -53,6 +53,9 @@ export class SubjectEntity {
   @Column({ type: 'text', nullable: true })
   generalObservations!: string | null;
 
+  @Column({ type: 'boolean', default: false, name: 'created_from_change' })
+  createdFromChange!: boolean;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

@@ -39,6 +39,7 @@ interface SubjectRow {
   priority: ProjectEntity['priority'];
   projectStatus: ProjectStatus;
   semesterNumber: number;
+  createdFromChange: boolean;
 }
 
 @Injectable()
@@ -116,6 +117,7 @@ export class FactoryDashboardService {
       .addSelect('project.priority', 'priority')
       .addSelect('project.status', 'projectStatus')
       .addSelect('semester.semesterNumber', 'semesterNumber')
+      .addSelect('subject.createdFromChange', 'createdFromChange')
       .getRawMany<SubjectRow>();
   }
 
@@ -146,6 +148,7 @@ export class FactoryDashboardService {
       correctionSentCount: obs.correctionSent,
       lastActivity: row.subjectUpdatedAt,
       actionUrl: buildSubjectActionUrl(row.subjectId, operationalState, obs.open),
+      createdFromChange: Boolean(row.createdFromChange),
     };
   }
 
@@ -173,39 +176,94 @@ export class FactoryDashboardService {
       countsByState[item.operationalState] += 1;
     }
 
-    const pendingCorrections = items
-      .filter((i) => i.operationalState === SubjectOperationalState.CHANGES_REQUESTED)
-      .sort((a, b) => b.openObservationsCount - a.openObservationsCount)
-      .slice(0, 10);
+    const totalAssigned = items.length;
 
-    const now = Date.now();
-    const upcomingDeliveries = items
+    const priorityRank: Record<string, number> = {
+      CRITICAL: 0,
+      HIGH: 1,
+      MEDIUM: 2,
+      LOW: 3,
+    };
+
+    const toTs = (value?: Date | string | null) => {
+      if (!value) return 0;
+      const d = typeof value === 'string' ? new Date(value) : value;
+      const ts = d instanceof Date ? d.getTime() : 0;
+      return Number.isFinite(ts) ? ts : 0;
+    };
+
+    const compareDueAsc = (a: FactorySubjectWorkItemDto, b: FactorySubjectWorkItemDto) =>
+      toTs(a.expectedDeliveryDate) - toTs(b.expectedDeliveryDate);
+
+    const compareLastActivityDesc = (a: FactorySubjectWorkItemDto, b: FactorySubjectWorkItemDto) =>
+      toTs(b.lastActivity) - toTs(a.lastActivity);
+
+    const comparePriorityThenDue = (a: FactorySubjectWorkItemDto, b: FactorySubjectWorkItemDto) => {
+      const prio = (priorityRank[String(a.priority)] ?? 9) - (priorityRank[String(b.priority)] ?? 9);
+      if (prio !== 0) return prio;
+      return compareDueAsc(a, b);
+    };
+
+    const pendingCorrectionsTop = items
+      .filter((i) => i.operationalState === SubjectOperationalState.CHANGES_REQUESTED)
+      .sort((a, b) => {
+        const obs = b.openObservationsCount - a.openObservationsCount;
+        if (obs !== 0) return obs;
+        return compareLastActivityDesc(a, b);
+      })
+      .slice(0, 5);
+
+    const upcomingDeliveriesTop = items
       .filter(
         (i) =>
           i.operationalState === SubjectOperationalState.NOT_STARTED ||
           i.operationalState === SubjectOperationalState.IN_PRODUCTION,
       )
       .filter((i) => i.expectedDeliveryDate)
-      .sort(
-        (a, b) =>
-          new Date(a.expectedDeliveryDate!).getTime() -
-          new Date(b.expectedDeliveryDate!).getTime(),
-      )
-      .slice(0, 10);
-
-    const recentlyCompleted = items
-      .filter((i) => i.operationalState === SubjectOperationalState.APPROVED)
-      .sort(
-        (a, b) =>
-          new Date(b.lastActivity ?? 0).getTime() - new Date(a.lastActivity ?? 0).getTime(),
-      )
+      .sort(compareDueAsc)
       .slice(0, 5);
+
+    const inProductionTop = items
+      .filter((i) => i.operationalState === SubjectOperationalState.IN_PRODUCTION)
+      .sort(comparePriorityThenDue)
+      .slice(0, 5);
+
+    const notStartedTop = items
+      .filter((i) => i.operationalState === SubjectOperationalState.NOT_STARTED)
+      .sort(comparePriorityThenDue)
+      .slice(0, 5);
+
+    const inReviewTop = items
+      .filter((i) => i.operationalState === SubjectOperationalState.IN_REVIEW)
+      .sort(compareLastActivityDesc)
+      .slice(0, 5);
+
+    const recentlyCompletedTop = items
+      .filter((i) => i.operationalState === SubjectOperationalState.APPROVED)
+      .sort(compareLastActivityDesc)
+      .slice(0, 5);
+
+    const dueSoonDays = 7;
+    const now = Date.now();
+    const dueSoonTs = now + dueSoonDays * 24 * 60 * 60 * 1000;
+    const overdueOrDueSoonCount = items.filter((i) => {
+      if (!i.expectedDeliveryDate) return false;
+      const ts = toTs(i.expectedDeliveryDate);
+      if (!ts) return false;
+      if (i.operationalState === SubjectOperationalState.APPROVED) return false;
+      return ts <= dueSoonTs;
+    }).length;
 
     return {
       countsByState,
-      pendingCorrections,
-      upcomingDeliveries,
-      recentlyCompleted,
+      totalAssigned,
+      notStartedTop,
+      inProductionTop,
+      inReviewTop,
+      pendingCorrectionsTop,
+      upcomingDeliveriesTop,
+      recentlyCompletedTop,
+      overdueOrDueSoonCount,
     };
   }
 
@@ -216,6 +274,11 @@ export class FactoryDashboardService {
     this.assertFactoryAccess(user);
     let items = await this.buildAllWorkItems(user);
 
+    if (query.origin === 'new') {
+      items = items.filter((i) => i.createdFromChange);
+    } else if (query.origin === 'original') {
+      items = items.filter((i) => !i.createdFromChange);
+    }
     if (query.status) {
       items = items.filter((i) => i.operationalState === query.status);
     }

@@ -49,6 +49,9 @@ export class SemesterEntity {
   @Column({ type: 'text', nullable: true })
   observations!: string | null;
 
+  @Column({ type: 'boolean', default: false, name: 'created_from_change' })
+  createdFromChange!: boolean;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

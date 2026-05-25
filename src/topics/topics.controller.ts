@@ -28,7 +28,7 @@ export class TopicsController {
   @Post(':subjectId/topics')
   @UseGuards(RolesGuard)
   @Roles(UserRole.PRODUCT, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Agregar temas a una asignatura existente' })
+  @ApiOperation({ summary: 'Deshabilitado: los temas se definen al crear la asignatura' })
   @ApiOkResponse({ type: ProjectDetailDto })
   @ApiUnauthorizedResponse()
   @ApiForbiddenResponse()

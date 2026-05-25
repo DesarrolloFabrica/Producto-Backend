@@ -4,8 +4,13 @@ import { Priority } from '../../common/enums/priority.enum';
 import { ProjectStatus } from '../../common/enums/project-status.enum';
 import { ChecklistStatus } from '../../common/enums/checklist-status.enum';
 import { SemesterStatus } from '../../common/enums/semester-status.enum';
+import { SubjectOperationalState } from '../../common/enums/subject-operational-state.enum';
 import { SubjectStatus } from '../../common/enums/subject-status.enum';
 import { UserRole } from '../../common/enums/user-role.enum';
+import {
+  ProjectChangeTimelineEntryDto,
+  ProjectRecentChangesDto,
+} from './project-change-tracking.dto';
 
 export class ProjectOwnerDto {
   @ApiProperty({ format: 'uuid' })
@@ -31,8 +36,14 @@ export class SubjectSummaryDto {
   @ApiProperty({ enum: SubjectStatus })
   status!: SubjectStatus;
 
+  @ApiProperty({ enum: SubjectOperationalState })
+  operationalState!: SubjectOperationalState;
+
   @ApiProperty()
   semesterNumber!: number;
+
+  @ApiProperty({ description: 'True si la materia fue agregada después de la solicitud inicial' })
+  createdFromChange!: boolean;
 
   @ApiPropertyOptional({ nullable: true })
   expectedDeliveryDate!: Date | null;
@@ -173,14 +184,26 @@ export class SubjectDetailDto {
   @ApiProperty({ enum: SubjectStatus })
   status!: SubjectStatus;
 
+  @ApiProperty({ enum: SubjectOperationalState })
+  operationalState!: SubjectOperationalState;
+
   @ApiProperty()
   progress!: number;
+
+  @ApiProperty({ description: 'True si la materia fue agregada después de la solicitud inicial' })
+  createdFromChange!: boolean;
 
   @ApiProperty({ type: [TopicDetailDto] })
   topics!: TopicDetailDto[];
 
   @ApiProperty({ type: [ChecklistItemDto] })
   checklist!: ChecklistItemDto[];
+
+  @ApiProperty()
+  openObservationsCount!: number;
+
+  @ApiProperty()
+  correctionSentCount!: number;
 
   @ApiProperty()
   createdAt!: Date;
@@ -198,6 +221,9 @@ export class SemesterDetailDto {
 
   @ApiProperty({ enum: SemesterStatus })
   status!: SemesterStatus;
+
+  @ApiProperty({ description: 'True si el semestre fue agregado después de la solicitud inicial' })
+  createdFromChange!: boolean;
 
   @ApiProperty()
   factoryExpectedDate!: Date;
@@ -227,4 +253,10 @@ export class ProjectDetailDto extends ProjectListItemDto {
 
   @ApiProperty({ type: [ProjectLinkDto] })
   links!: ProjectLinkDto[];
+
+  @ApiPropertyOptional({ type: ProjectRecentChangesDto })
+  recentChanges?: ProjectRecentChangesDto;
+
+  @ApiPropertyOptional({ type: [ProjectChangeTimelineEntryDto] })
+  changeTimeline?: ProjectChangeTimelineEntryDto[];
 }

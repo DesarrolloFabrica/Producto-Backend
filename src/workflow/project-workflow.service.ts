@@ -10,6 +10,15 @@ import { ObservationsService } from '../observations/observations.service';
 import { ProjectEntity } from '../projects/project.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
 
+interface ProjectSubjectAggregateRow {
+  total: string | number;
+  changesRequested: string | number;
+  inReview: string | number;
+  inReviewOrSubmitted: string | number;
+  inProduction: string | number;
+  approved: string | number;
+}
+
 @Injectable()
 export class ProjectWorkflowService {
   constructor(
@@ -41,82 +50,118 @@ export class ProjectWorkflowService {
     return count > 0;
   }
 
-  async deriveProjectStatus(projectId: string, manager?: EntityManager): Promise<ProjectStatus> {
-    const projectRepo = manager ? manager.getRepository(ProjectEntity) : this.projectRepo;
+  async deriveProjectStatus(
+    projectId: string,
+    manager?: EntityManager,
+    knownProjectStatus?: ProjectStatus,
+  ): Promise<ProjectStatus> {
     const subjectRepo = manager ? manager.getRepository(SubjectEntity) : this.subjectRepo;
 
-    const project = await projectRepo.findOne({ where: { id: projectId } });
-    if (!project) {
+    const currentStatus =
+      knownProjectStatus ??
+      (
+        await (manager ? manager.getRepository(ProjectEntity) : this.projectRepo).findOne({
+          where: { id: projectId },
+          select: { id: true, status: true },
+        })
+      )?.status;
+
+    if (!currentStatus) {
       throw new Error(`Project ${projectId} not found`);
     }
 
-    if (project.status === ProjectStatus.CLOSED) {
+    if (currentStatus === ProjectStatus.CLOSED) {
       return ProjectStatus.CLOSED;
     }
-    // Entrega final (enum persistido DELIVERED_TO_LMS); no recalcular hacia atrás.
-    if (project.status === ProjectStatus.DELIVERED_TO_LMS) {
+    if (currentStatus === ProjectStatus.DELIVERED_TO_LMS) {
       return ProjectStatus.DELIVERED_TO_LMS;
     }
 
-    const subjects = await subjectRepo.find({
-      where: { project: { id: projectId }, deletedAt: IsNull() },
-    });
+    const counts = await subjectRepo
+      .createQueryBuilder('s')
+      .select('COUNT(*)::int', 'total')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE s.status = '${SubjectStatus.CHANGES_REQUESTED}')::int`,
+        'changesRequested',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE s.status = '${SubjectStatus.IN_REVIEW}')::int`,
+        'inReview',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE s.status IN ('${SubjectStatus.SUBMITTED}', '${SubjectStatus.IN_REVIEW}'))::int`,
+        'inReviewOrSubmitted',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE s.status = '${SubjectStatus.IN_PRODUCTION}')::int`,
+        'inProduction',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE s.status = '${SubjectStatus.APPROVED}')::int`,
+        'approved',
+      )
+      .where('s."projectId" = :projectId', { projectId })
+      .andWhere('s."deletedAt" IS NULL')
+      .getRawOne<ProjectSubjectAggregateRow>();
 
-    const hasBlocking = await this.observationsService.hasBlockingObservationsForProject(
-      projectId,
-      manager,
-    );
-    const hasRejected = await this.hasRejectedChecklistForProject(projectId, manager);
+    const total = Number(counts?.total ?? 0);
+    const [hasBlocking, hasRejected] = await Promise.all([
+      this.observationsService.hasBlockingObservationsForProject(projectId, manager),
+      this.hasRejectedChecklistForProject(projectId, manager),
+    ]);
 
     if (hasBlocking || hasRejected) {
       return ProjectStatus.FEEDBACK_PENDING;
     }
 
-    if (subjects.some((s) => s.status === SubjectStatus.CHANGES_REQUESTED)) {
+    if (Number(counts?.changesRequested ?? 0) > 0) {
       return ProjectStatus.FEEDBACK_PENDING;
     }
 
-    if (subjects.some((s) => s.status === SubjectStatus.IN_REVIEW)) {
+    if (Number(counts?.inReview ?? 0) > 0) {
       return ProjectStatus.IN_REVIEW;
     }
 
-    if (
-      subjects.some(
-        (s) => s.status === SubjectStatus.SUBMITTED || s.status === SubjectStatus.IN_REVIEW,
-      )
-    ) {
+    if (Number(counts?.inReviewOrSubmitted ?? 0) > 0) {
       return ProjectStatus.IN_REVIEW;
     }
 
-    if (subjects.some((s) => s.status === SubjectStatus.IN_PRODUCTION)) {
+    if (Number(counts?.inProduction ?? 0) > 0) {
       return ProjectStatus.IN_PRODUCTION;
     }
 
-    if (subjects.length > 0 && subjects.every((s) => s.status === SubjectStatus.APPROVED)) {
+    if (total > 0 && Number(counts?.approved ?? 0) === total) {
       return ProjectStatus.IN_REVIEW;
     }
 
-    return project.status;
+    return currentStatus;
   }
 
   async updateProjectStatus(
     projectId: string,
     userId: string,
     manager?: EntityManager,
-  ): Promise<ProjectEntity> {
+    knownPreviousStatus?: ProjectStatus,
+  ): Promise<ProjectStatus> {
     const projectRepo = manager ? manager.getRepository(ProjectEntity) : this.projectRepo;
-    const project = await projectRepo.findOne({ where: { id: projectId } });
 
-    if (!project) {
+    const previousStatus =
+      knownPreviousStatus ??
+      (
+        await projectRepo.findOne({
+          where: { id: projectId },
+          select: { id: true, status: true },
+        })
+      )?.status;
+
+    if (!previousStatus) {
       throw new Error(`Project ${projectId} not found`);
     }
 
-    const nextStatus = await this.deriveProjectStatus(projectId, manager);
-    const previousStatus = project.status;
+    const nextStatus = await this.deriveProjectStatus(projectId, manager, previousStatus);
 
     if (previousStatus !== nextStatus) {
-      project.status = nextStatus;
-      await projectRepo.save(project);
+      await projectRepo.update({ id: projectId }, { status: nextStatus });
 
       await this.statusHistoryService.recordIfChanged(
         {
@@ -130,6 +175,6 @@ export class ProjectWorkflowService {
       );
     }
 
-    return project;
+    return nextStatus;
   }
 }

@@ -9,6 +9,7 @@ import { Brackets, DataSource, EntityManager, IsNull, Repository } from 'typeorm
 import { AuditAction } from '../common/enums/audit-action.enum';
 import { ObservationStatus } from '../common/enums/observation-status.enum';
 import { ProjectStatus } from '../common/enums/project-status.enum';
+import { SubjectStatus } from '../common/enums/subject-status.enum';
 import { RelatedEntityType } from '../common/enums/related-entity-type.enum';
 import { NotificationEventType } from '../common/enums/notification-event-type.enum';
 import { NotificationType } from '../common/enums/notification-type.enum';
@@ -145,6 +146,7 @@ export class ObservationsService {
     return await this.dataSource.transaction(async (manager) => {
       const project = await this.loadProjectForModify(dto.projectId, user, manager);
       await this.validateRelatedEntity(dto, manager);
+      await this.assertNoProductObservationOnApprovedSubject(dto, user, manager);
 
       const observationRepo = manager.getRepository(ObservationEntity);
       const observation = await observationRepo.save(
@@ -274,8 +276,14 @@ export class ObservationsService {
     if (!subject) {
       throw new NotFoundException('Subject not found');
     }
-    await this.loadProjectForView(subject.project.id, user);
+    this.projectsService.assertCanViewProject(subject.project, user);
+    return await this.findBySubjectForProject(subjectId, subject.project.id);
+  }
 
+  async findBySubjectForProject(
+    subjectId: string,
+    projectId: string,
+  ): Promise<ObservationResponseDto[]> {
     const observations = await this.observationRepo
       .createQueryBuilder('o')
       .leftJoinAndSelect('o.author', 'author')
@@ -283,22 +291,22 @@ export class ObservationsService {
       .leftJoinAndSelect('o.messages', 'messages')
       .leftJoinAndSelect('messages.author', 'messageAuthor')
       .leftJoinAndSelect('o.checklistItem', 'checklistItem')
-      .where('o.projectId = :projectId', { projectId: subject.project.id })
-      .andWhere(
+      .leftJoin('o.topic', 'topic')
+      .leftJoin('checklistItem.subject', 'checklistSubject')
+      .where(
         new Brackets((qb) => {
           qb.where('o.subjectId = :subjectId', { subjectId })
             .orWhere(
               '(o.relatedEntityType = :subjectType AND o.relatedEntityId = :subjectId)',
               { subjectType: RelatedEntityType.SUBJECT, subjectId },
             )
-            .orWhere(
-              `o.topicId IN (SELECT t.id FROM topics t WHERE t."subjectId" = :subjectId AND t."deletedAt" IS NULL)`,
-              { subjectId },
-            )
-            .orWhere(
-              `o.checklistItemId IN (SELECT c.id FROM checklist_items c WHERE c."subjectId" = :subjectId)`,
-              { subjectId },
-            );
+            .orWhere('topic.subjectId = :subjectId', { subjectId })
+            .orWhere('checklistSubject.id = :subjectId', { subjectId });
+        }),
+      )
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where('o.projectId = :projectId', { projectId }).orWhere('o.projectId IS NULL');
         }),
       )
       .orderBy('o.createdAt', 'DESC')
@@ -307,7 +315,7 @@ export class ObservationsService {
 
     return observations.map((o) => {
       const dto = this.toObservationResponse(o);
-      dto.projectId = subject.project.id;
+      dto.projectId = projectId;
       return dto;
     });
   }
@@ -589,41 +597,49 @@ export class ObservationsService {
       (await this.resolveSubjectIdFromObservation(observation, manager));
 
     if (!subjectId) {
-      const project = await this.projectWorkflowService.updateProjectStatus(
+      const projectStatus = await this.projectWorkflowService.updateProjectStatus(
         observation.project.id,
         userId,
         manager,
+        observation.project.status,
       );
       const projectProgress = await this.progressService.calculateProjectProgress(
         observation.project.id,
         manager,
       );
       return {
-        projectId: project.id,
-        projectStatus: project.status,
+        projectId: observation.project.id,
+        projectStatus,
         projectProgress,
       };
     }
 
     await this.progressService.calculateSubjectProgress(subjectId, manager);
-    const subject = await this.subjectWorkflowService.updateSubjectStatus(
+    const subjectWithSemester = await manager.getRepository(SubjectEntity).findOne({
+      where: { id: subjectId },
+      relations: { semester: true, project: true },
+    });
+    if (!subjectWithSemester) {
+      throw new Error(`Subject ${subjectId} not found`);
+    }
+
+    await this.subjectWorkflowService.updateSubjectStatus(
       subjectId,
       userId,
       manager,
+      subjectWithSemester.status,
     );
-    const subjectWithSemester = await manager.getRepository(SubjectEntity).findOne({
-      where: { id: subjectId },
-      relations: { semester: true },
-    });
-    const semester = await this.semesterWorkflowService.updateSemesterStatus(
-      subjectWithSemester!.semester.id,
+    const semesterStatus = await this.semesterWorkflowService.updateSemesterStatus(
+      subjectWithSemester.semester.id,
       userId,
       manager,
+      subjectWithSemester.semester.status,
     );
-    const project = await this.projectWorkflowService.updateProjectStatus(
+    const projectStatus = await this.projectWorkflowService.updateProjectStatus(
       observation.project.id,
       userId,
       manager,
+      subjectWithSemester.project.status,
     );
     const projectProgress = await this.progressService.calculateProjectProgress(
       observation.project.id,
@@ -631,16 +647,17 @@ export class ObservationsService {
     );
     const refreshedSubject = await manager.getRepository(SubjectEntity).findOne({
       where: { id: subjectId },
+      select: { id: true, status: true, progress: true },
     });
 
     return {
       subjectId,
       subjectStatus: refreshedSubject!.status,
       subjectProgress: refreshedSubject!.progress,
-      semesterId: semester.id,
-      semesterStatus: semester.status,
-      projectId: project.id,
-      projectStatus: project.status,
+      semesterId: subjectWithSemester.semester.id,
+      semesterStatus,
+      projectId: observation.project.id,
+      projectStatus,
       projectProgress,
     };
   }
@@ -865,6 +882,29 @@ export class ObservationsService {
       }
       default:
         throw new BadRequestException('Invalid relatedEntityType');
+    }
+  }
+
+  private async assertNoProductObservationOnApprovedSubject(
+    dto: CreateObservationDto,
+    user: UserEntity,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (user.role !== UserRole.PRODUCT && user.role !== UserRole.ADMIN) return;
+
+    const subjectId =
+      dto.subjectId ??
+      (dto.relatedEntityType === RelatedEntityType.SUBJECT ? dto.relatedEntityId : null);
+    if (!subjectId) return;
+
+    const subject = await manager.getRepository(SubjectEntity).findOne({
+      where: { id: subjectId, deletedAt: IsNull() },
+    });
+    if (
+      subject?.status === SubjectStatus.APPROVED ||
+      subject?.status === SubjectStatus.DELIVERED
+    ) {
+      throw new BadRequestException('Approved subjects cannot receive new correction observations.');
     }
   }
 

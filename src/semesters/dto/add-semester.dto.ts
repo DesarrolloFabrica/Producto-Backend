@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsISO8601,
@@ -12,6 +13,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { SUBJECT_TOPICS_RANGE_MESSAGE } from '../../common/constants/subject-topics.constants';
 
 export class AddSemesterSubjectDto {
   @ApiProperty()
@@ -19,9 +21,10 @@ export class AddSemesterSubjectDto {
   @IsNotEmpty()
   name!: string;
 
-  @ApiProperty({ type: [String] })
+  @ApiProperty({ type: [String], minItems: 4, maxItems: 6 })
   @IsArray()
-  @ArrayMinSize(1)
+  @ArrayMinSize(4, { message: SUBJECT_TOPICS_RANGE_MESSAGE })
+  @ArrayMaxSize(6, { message: SUBJECT_TOPICS_RANGE_MESSAGE })
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
   topics!: string[];

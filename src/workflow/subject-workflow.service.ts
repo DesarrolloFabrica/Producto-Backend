@@ -8,6 +8,14 @@ import { ChecklistItemEntity } from '../checklist/checklist-item.entity';
 import { ObservationsService } from '../observations/observations.service';
 import { SubjectEntity } from '../subjects/subject.entity';
 
+interface SubjectChecklistAggregateRow {
+  total: string | number;
+  rejected: string | number;
+  inProduction: string | number;
+  approved: string | number;
+  deliveredOrApproved: string | number;
+}
+
 @Injectable()
 export class SubjectWorkflowService {
   constructor(
@@ -25,15 +33,34 @@ export class SubjectWorkflowService {
       ? manager.getRepository(ChecklistItemEntity)
       : this.checklistRepo;
 
-    const items = await checklistRepo.find({
-      where: { subject: { id: subjectId } },
-    });
+    const counts = await checklistRepo
+      .createQueryBuilder('c')
+      .select('COUNT(*)::int', 'total')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE c.status = '${ChecklistStatus.RECHAZADO}')::int`,
+        'rejected',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE c.status = '${ChecklistStatus.EN_PRODUCCION}')::int`,
+        'inProduction',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE c.status = '${ChecklistStatus.APROBADO}')::int`,
+        'approved',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE c.status IN ('${ChecklistStatus.ENTREGADO}', '${ChecklistStatus.APROBADO}'))::int`,
+        'deliveredOrApproved',
+      )
+      .where('c."subjectId" = :subjectId', { subjectId })
+      .getRawOne<SubjectChecklistAggregateRow>();
 
-    if (items.length === 0) {
+    const total = Number(counts?.total ?? 0);
+    if (total === 0) {
       return SubjectStatus.PENDING;
     }
 
-    if (items.some((item) => item.status === ChecklistStatus.RECHAZADO)) {
+    if (Number(counts?.rejected ?? 0) > 0) {
       return SubjectStatus.CHANGES_REQUESTED;
     }
 
@@ -45,19 +72,15 @@ export class SubjectWorkflowService {
       return SubjectStatus.CHANGES_REQUESTED;
     }
 
-    if (items.some((item) => item.status === ChecklistStatus.EN_PRODUCCION)) {
+    if (Number(counts?.inProduction ?? 0) > 0) {
       return SubjectStatus.IN_PRODUCTION;
     }
 
-    if (items.every((item) => item.status === ChecklistStatus.APROBADO)) {
+    if (Number(counts?.approved ?? 0) === total) {
       return SubjectStatus.APPROVED;
     }
 
-    if (
-      items.every((item) =>
-        [ChecklistStatus.ENTREGADO, ChecklistStatus.APROBADO].includes(item.status),
-      )
-    ) {
+    if (Number(counts?.deliveredOrApproved ?? 0) === total) {
       return SubjectStatus.SUBMITTED;
     }
 
@@ -68,20 +91,27 @@ export class SubjectWorkflowService {
     subjectId: string,
     userId: string,
     manager?: EntityManager,
-  ): Promise<SubjectEntity> {
+    knownPreviousStatus?: SubjectStatus,
+  ): Promise<SubjectStatus> {
     const subjectRepo = manager ? manager.getRepository(SubjectEntity) : this.subjectRepo;
-    const subject = await subjectRepo.findOne({ where: { id: subjectId } });
 
-    if (!subject) {
+    const previousStatus =
+      knownPreviousStatus ??
+      (
+        await subjectRepo.findOne({
+          where: { id: subjectId },
+          select: { id: true, status: true },
+        })
+      )?.status;
+
+    if (!previousStatus) {
       throw new Error(`Subject ${subjectId} not found`);
     }
 
     const nextStatus = await this.deriveSubjectStatus(subjectId, manager);
-    const previousStatus = subject.status;
 
     if (previousStatus !== nextStatus) {
-      subject.status = nextStatus;
-      await subjectRepo.save(subject);
+      await subjectRepo.update({ id: subjectId }, { status: nextStatus });
 
       await this.statusHistoryService.recordIfChanged(
         {
@@ -95,6 +125,6 @@ export class SubjectWorkflowService {
       );
     }
 
-    return subject;
+    return nextStatus;
   }
 }

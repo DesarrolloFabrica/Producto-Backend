@@ -15,7 +15,10 @@ export function deriveSubjectOperationalState(
   const { subjectStatus, projectStatus, openObservationsCount, correctionSentCount } =
     input;
 
-  if (subjectStatus === SubjectStatus.APPROVED) {
+  if (
+    subjectStatus === SubjectStatus.APPROVED ||
+    subjectStatus === SubjectStatus.DELIVERED
+  ) {
     return SubjectOperationalState.APPROVED;
   }
   if (openObservationsCount > 0) {

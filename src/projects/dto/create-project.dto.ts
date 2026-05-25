@@ -1,7 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsInt,
@@ -18,6 +20,7 @@ import {
 } from 'class-validator';
 import { Modality } from '../../common/enums/modality.enum';
 import { Priority } from '../../common/enums/priority.enum';
+import { SUBJECT_TOPICS_RANGE_MESSAGE } from '../../common/constants/subject-topics.constants';
 
 export class CreateProjectSyllabusDto {
   @ApiProperty()
@@ -44,9 +47,12 @@ export class CreateProjectSubjectDto {
   @IsNotEmpty()
   name!: string;
 
-  @ApiProperty({ type: [String], example: ['Tema 1', 'Tema 2'] })
+  @ApiProperty({ type: [String], example: ['Tema 1', 'Tema 2', 'Tema 3', 'Tema 4', 'Tema 5'], minItems: 4, maxItems: 6 })
+  @IsArray()
   @IsString({ each: true })
-  @ArrayMinSize(1)
+  @IsNotEmpty({ each: true })
+  @ArrayMinSize(4, { message: SUBJECT_TOPICS_RANGE_MESSAGE })
+  @ArrayMaxSize(6, { message: SUBJECT_TOPICS_RANGE_MESSAGE })
   topics!: string[];
 }
 

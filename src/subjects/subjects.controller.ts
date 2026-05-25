@@ -19,6 +19,7 @@ import { RejectSubjectDto } from './dto/reject-subject.dto';
 import { RequestSubjectCorrectionDto } from './dto/request-subject-correction.dto';
 import { SubmitSubjectResponseDto } from './dto/submit-subject-response.dto';
 import { UpdateProductionStatusDto } from './dto/update-production-status.dto';
+import { SubjectWorkspaceDto } from './dto/subject-workspace.dto';
 import { SubjectsService } from './subjects.service';
 
 @ApiTags('subjects')
@@ -39,6 +40,19 @@ export class SubjectsController {
     @CurrentUser() user: UserEntity,
   ): Promise<ProjectDetailDto> {
     return await this.subjectsService.getDetailById(id, user);
+  }
+
+  @Get(':id/workspace')
+  @ApiOperation({ summary: 'Obtener workspace de asignatura (proyecto + observaciones)' })
+  @ApiOkResponse({ type: SubjectWorkspaceDto })
+  @ApiUnauthorizedResponse()
+  @ApiForbiddenResponse()
+  @ApiNotFoundResponse()
+  async getWorkspace(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<SubjectWorkspaceDto> {
+    return await this.subjectsService.getWorkspace(id, user);
   }
 
   @Post(':id/submit')

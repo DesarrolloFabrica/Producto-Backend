@@ -49,6 +49,7 @@ export class ObservationEntity {
   @RelationId((observation: ObservationEntity) => observation.subject)
   subjectId!: string | null;
 
+  @Index()
   @ManyToOne(() => TopicEntity, (topic) => topic.observations, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'topicId' })
   topic!: TopicEntity | null;
@@ -56,6 +57,7 @@ export class ObservationEntity {
   @RelationId((observation: ObservationEntity) => observation.topic)
   topicId!: string | null;
 
+  @Index()
   @ManyToOne(() => ChecklistItemEntity, (item) => item.observationsList, {
     nullable: true,
     onDelete: 'SET NULL',

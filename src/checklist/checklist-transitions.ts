@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { ChecklistStatus } from '../common/enums/checklist-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
+import type { ChecklistItemEntity } from './checklist-item.entity';
 
 const FABRICA_ALLOWED: Partial<Record<ChecklistStatus, ChecklistStatus[]>> = {
   [ChecklistStatus.PENDIENTE]: [ChecklistStatus.EN_PRODUCCION],
@@ -68,4 +69,17 @@ export function assertChecklistStatusTransition(
   }
 
   throw new BadRequestException('Role not allowed to update checklist status');
+}
+
+/** Ítems que Product puede pasar a APROBADO en bloque (sin tocar ya aprobados ni estados de fábrica no entregados). */
+export function isEligibleForProductBulkApprove(item: ChecklistItemEntity): boolean {
+  if (item.status === ChecklistStatus.APROBADO) return false;
+  if (item.ownerRole === UserRole.PRODUCT) {
+    return (
+      item.status === ChecklistStatus.PENDIENTE || item.status === ChecklistStatus.RECHAZADO
+    );
+  }
+  return (
+    item.status === ChecklistStatus.ENTREGADO || item.status === ChecklistStatus.RECHAZADO
+  );
 }

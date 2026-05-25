@@ -41,6 +41,9 @@ export class FactorySubjectWorkItemDto {
 
   @ApiProperty()
   actionUrl!: string;
+
+  @ApiProperty({ description: 'True si la materia fue agregada después de la solicitud inicial' })
+  createdFromChange!: boolean;
 }
 
 export class FactorySubjectsPageDto {

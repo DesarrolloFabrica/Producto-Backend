@@ -1,6 +1,19 @@
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
+import { TlsOptions } from 'tls';
 import { DataSourceOptions } from 'typeorm';
 import { ALL_ENTITIES } from '../database/entities';
+
+function resolveSslOptions(url: string): boolean | TlsOptions | undefined {
+  if (/sslmode=disable/i.test(url)) {
+    return false;
+  }
+
+  if (process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'false') {
+    return { rejectUnauthorized: false };
+  }
+
+  return undefined;
+}
 
 export function buildDataSourceOptions(): DataSourceOptions {
   const isProd = process.env.NODE_ENV === 'production';
@@ -11,9 +24,12 @@ export function buildDataSourceOptions(): DataSourceOptions {
     throw new Error('DATABASE_URL is required');
   }
 
+  const ssl = resolveSslOptions(url);
+
   return {
     type: 'postgres',
     url,
+    ...(ssl !== undefined ? { ssl } : {}),
     synchronize: false,
     logging: isProd ? ['error', 'warn'] : ['error', 'warn', 'schema'],
     migrationsTableName: 'typeorm_migrations',
