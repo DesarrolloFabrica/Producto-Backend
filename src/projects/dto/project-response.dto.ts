@@ -2,6 +2,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Modality } from '../../common/enums/modality.enum';
 import { Priority } from '../../common/enums/priority.enum';
 import { ProjectStatus } from '../../common/enums/project-status.enum';
+import { SubjectMatterExpertStatus } from '../../common/enums/subject-matter-expert-status.enum';
+import { SubjectMatterExpertType } from '../../common/enums/subject-matter-expert-type.enum';
 import { ChecklistStatus } from '../../common/enums/checklist-status.enum';
 import { SemesterStatus } from '../../common/enums/semester-status.enum';
 import { SubjectOperationalState } from '../../common/enums/subject-operational-state.enum';
@@ -86,8 +88,20 @@ export class ProjectListItemDto {
   @ApiProperty()
   progress!: number;
 
-  @ApiProperty()
-  expectedDeliveryDate!: Date;
+  @ApiPropertyOptional({ nullable: true })
+  expectedDeliveryDate!: Date | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  activatedAt!: Date | null;
+
+  @ApiProperty({ enum: SubjectMatterExpertType })
+  subjectMatterExpertType!: SubjectMatterExpertType;
+
+  @ApiProperty({ enum: SubjectMatterExpertStatus })
+  subjectMatterExpertStatus!: SubjectMatterExpertStatus;
+
+  @ApiPropertyOptional({ nullable: true })
+  expertConfirmedAt!: Date | null;
 
   @ApiProperty({ type: ProjectOwnerDto })
   productOwner!: ProjectOwnerDto;
@@ -225,8 +239,8 @@ export class SemesterDetailDto {
   @ApiProperty({ description: 'True si el semestre fue agregado después de la solicitud inicial' })
   createdFromChange!: boolean;
 
-  @ApiProperty()
-  factoryExpectedDate!: Date;
+  @ApiPropertyOptional({ nullable: true })
+  factoryExpectedDate!: Date | null;
 
   @ApiPropertyOptional({ nullable: true })
   continuationDate!: Date | null;

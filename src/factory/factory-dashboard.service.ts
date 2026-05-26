@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository, SelectQueryBuilder } from 'typeorm';
 import { ProjectStatus } from '../common/enums/project-status.enum';
+import { SubjectMatterExpertStatus } from '../common/enums/subject-matter-expert-status.enum';
 import { SubjectOperationalState } from '../common/enums/subject-operational-state.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { ObservationEntity } from '../observations/observation.entity';
@@ -65,7 +66,10 @@ export class FactoryDashboardService {
     qb.innerJoin('subject.project', 'project')
       .innerJoin('subject.semester', 'semester')
       .where('subject.deletedAt IS NULL')
-      .andWhere('project.deletedAt IS NULL');
+      .andWhere('project.deletedAt IS NULL')
+      .andWhere('project.subjectMatterExpertStatus = :smeReady', {
+        smeReady: SubjectMatterExpertStatus.READY,
+      });
 
     if (user.role === UserRole.ADMIN) {
       return qb;

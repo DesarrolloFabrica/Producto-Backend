@@ -40,8 +40,8 @@ export class SemesterEntity {
   })
   status!: SemesterStatus;
 
-  @Column({ type: 'timestamptz' })
-  factoryExpectedDate!: Date;
+  @Column({ type: 'timestamptz', nullable: true })
+  factoryExpectedDate!: Date | null;
 
   @Column({ type: 'timestamptz', nullable: true })
   continuationDate!: Date | null;

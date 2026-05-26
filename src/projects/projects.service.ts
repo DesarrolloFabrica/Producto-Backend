@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -10,6 +11,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { Brackets, DataSource, IsNull, Repository, SelectQueryBuilder } from 'typeorm';
 import { AuditAction } from '../common/enums/audit-action.enum';
 import { ChecklistStatus } from '../common/enums/checklist-status.enum';
+import { ProjectInstitutionalState } from '../common/enums/project-institutional-state.enum';
 import { ProjectStatus } from '../common/enums/project-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { SubjectStatus } from '../common/enums/subject-status.enum';
@@ -34,7 +36,14 @@ import { TopicEntity } from '../topics/topic.entity';
 import { UserEntity } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { SubjectMatterExpertStatus } from '../common/enums/subject-matter-expert-status.enum';
+import { SubjectMatterExpertType } from '../common/enums/subject-matter-expert-type.enum';
 import { assertSubjectTopicsCount } from '../common/utils/subject-topics.util';
+import {
+  isProjectActiveForFactory,
+  resolveActivationOnCreate,
+  resolveActivationOnExpertConfirm,
+} from '../common/utils/project-sme.util';
 import {
   ChecklistItemDto,
   ProjectDetailDto,
@@ -54,6 +63,9 @@ import { ProjectEntity } from './project.entity';
 import { ObservationEntity } from '../observations/observation.entity';
 import { loadProductObservationCountsBySubject } from '../observations/observation-subject-query.util';
 import { deriveSubjectOperationalState } from '../factory/utils/operational-state.util';
+import { InstitutionalWorkflowService } from '../institutional-workflow/institutional-workflow.service';
+import { isInstitutionalWorkflowEnabled } from '../institutional-workflow/institutional-workflow.config';
+import { statesPendingForRole } from '../institutional-workflow/institutional-workflow.transitions';
 
 interface ProjectBaseRow {
   id: string;
@@ -64,12 +76,17 @@ interface ProjectBaseRow {
   priority: ProjectEntity['priority'];
   status: ProjectStatus;
   progress: number;
-  expectedDeliveryDate: Date;
+  expectedDeliveryDate: Date | null;
+  activatedAt: Date | null;
+  subjectMatterExpertType: ProjectEntity['subjectMatterExpertType'];
+  subjectMatterExpertStatus: ProjectEntity['subjectMatterExpertStatus'];
+  expertConfirmedAt: Date | null;
   observations: string | null;
   createdAt: Date;
   updatedAt: Date;
   productOwnerId: string;
   factoryOwnerId: string | null;
+  legacyWorkflow: boolean;
 }
 
 interface ProjectOwnerRow {
@@ -85,7 +102,7 @@ interface ProjectSemesterRow {
   semesterNumber: number;
   status: SemesterEntity['status'];
   createdFromChange: boolean;
-  factoryExpectedDate: Date;
+  factoryExpectedDate: Date | null;
   continuationDate: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -153,6 +170,7 @@ export class ProjectsService {
     private readonly progressService: ProgressService,
     private readonly projectWorkflowService: ProjectWorkflowService,
     private readonly mailService: MailService,
+    private readonly institutionalWorkflowService: InstitutionalWorkflowService,
   ) {}
 
   assertCanCreateProject(user: UserEntity): void {
@@ -177,11 +195,22 @@ export class ProjectsService {
         ProjectStatus.FEEDBACK_PENDING,
         ProjectStatus.IN_REVIEW,
       ];
+      if (!isProjectActiveForFactory(project.subjectMatterExpertStatus)) {
+        throw new ForbiddenException();
+      }
+
       const isUnassigned = !project.factoryOwner;
       // Fabrica can always see their assigned projects. Additionally, unassigned projects
       // in the operational pipeline must be visible so they don't disappear after refresh.
       if (isAssigned || (isUnassigned && visibleStatuses.includes(project.status))) return;
       throw new ForbiddenException();
+    }
+
+    if (user.role === UserRole.PLANEACION || user.role === UserRole.LMS) {
+      if (project.legacyWorkflow) {
+        throw new ForbiddenException();
+      }
+      return;
     }
 
     throw new ForbiddenException();
@@ -218,26 +247,39 @@ export class ProjectsService {
     }
 
     if (user.role === UserRole.FABRICA) {
-      return qb.andWhere(
-        new Brackets((sub) => {
-          sub
-            .where('project.factoryOwnerId = :userId', { userId: user.id })
-            .orWhere(
-              new Brackets((unassigned) => {
-                unassigned
-                  .where('project.factoryOwnerId IS NULL')
-                  .andWhere('project.status IN (:...visibleStatuses)', {
-                    visibleStatuses: [
-                      ProjectStatus.READY_FOR_PRODUCTION,
-                      ProjectStatus.IN_PRODUCTION,
-                      ProjectStatus.FEEDBACK_PENDING,
-                      ProjectStatus.IN_REVIEW,
-                    ],
-                  });
-              }),
-            );
-        }),
-      );
+      return qb
+        .andWhere('project.subjectMatterExpertStatus = :smeReady', {
+          smeReady: SubjectMatterExpertStatus.READY,
+        })
+        .andWhere(
+          new Brackets((sub) => {
+            sub
+              .where('project.factoryOwnerId = :userId', { userId: user.id })
+              .orWhere(
+                new Brackets((unassigned) => {
+                  unassigned
+                    .where('project.factoryOwnerId IS NULL')
+                    .andWhere('project.status IN (:...visibleStatuses)', {
+                      visibleStatuses: [
+                        ProjectStatus.READY_FOR_PRODUCTION,
+                        ProjectStatus.IN_PRODUCTION,
+                        ProjectStatus.FEEDBACK_PENDING,
+                        ProjectStatus.IN_REVIEW,
+                      ],
+                    });
+                }),
+              );
+          }),
+        );
+    }
+
+    if (user.role === UserRole.PLANEACION || user.role === UserRole.LMS) {
+      const instStates = statesPendingForRole(user.role);
+      return qb
+        .innerJoin('project.subjects', 'instSubject', 'instSubject.deletedAt IS NULL')
+        .andWhere('project.legacyWorkflow = false')
+        .andWhere('instSubject.operational_state IN (:...instStates)', { instStates })
+        .distinct(true);
     }
 
     throw new ForbiddenException();
@@ -251,7 +293,9 @@ export class ProjectsService {
     const includeSubjectsSummary =
       user.role === UserRole.FABRICA ||
       user.role === UserRole.ADMIN ||
-      user.role === UserRole.PRODUCT;
+      user.role === UserRole.PRODUCT ||
+      user.role === UserRole.PLANEACION ||
+      user.role === UserRole.LMS;
     const summariesByProject = includeSubjectsSummary
       ? await this.loadSubjectsSummaryForProjects(projects.map((p) => p.id))
       : new Map<string, SubjectSummaryDto[]>();
@@ -317,6 +361,10 @@ export class ProjectsService {
     }
 
     for (const row of rows) {
+      const projectSummaries = result.get(row.projectId) ?? [];
+      if (projectSummaries.some((entry) => entry.id === row.id)) {
+        continue;
+      }
       const obsCounts = obsCountMap.get(row.id) ?? {
         open: 0,
         correctionSent: 0,
@@ -342,9 +390,8 @@ export class ProjectsService {
         correctionSentCount: obsCounts.correctionSent,
         updatedAt: row.updatedAt,
       };
-      const list = result.get(row.projectId) ?? [];
-      list.push(summary);
-      result.set(row.projectId, list);
+      projectSummaries.push(summary);
+      result.set(row.projectId, projectSummaries);
     }
 
     return result;
@@ -363,11 +410,16 @@ export class ProjectsService {
           p.status,
           p.progress,
           p."expectedDeliveryDate",
+          p."activatedAt",
+          p."subjectMatterExpertType",
+          p."subjectMatterExpertStatus",
+          p."expertConfirmedAt",
           p.observations,
           p."createdAt",
           p."updatedAt",
           p."productOwnerId",
-          p."factoryOwnerId"
+          p."factoryOwnerId",
+          p.legacy_workflow AS "legacyWorkflow"
         FROM projects p
         WHERE p.id = $1
           AND p."deletedAt" IS NULL
@@ -413,7 +465,16 @@ export class ProjectsService {
       !project.factoryOwnerId &&
       visibleStatuses.includes(project.status);
 
-    if (!isAdmin && !isProductOwner && !isFactoryOwner && !isVisibleUnassignedFactoryProject) {
+    const isInstitutionalReader =
+      (user.role === UserRole.PLANEACION || user.role === UserRole.LMS) && !project.legacyWorkflow;
+
+    if (
+      !isAdmin &&
+      !isProductOwner &&
+      !isFactoryOwner &&
+      !isVisibleUnassignedFactoryProject &&
+      !isInstitutionalReader
+    ) {
       throw new ForbiddenException();
     }
 
@@ -540,6 +601,8 @@ export class ProjectsService {
       this.assertSubjectsTopicsCount(semester.subjects);
     }
 
+    const activation = resolveActivationOnCreate(dto.subjectMatterExpertType);
+
     const projectId = await this.dataSource.transaction(async (manager) => {
       const projectRepository = manager.getRepository(ProjectEntity);
       const linkRepository = manager.getRepository(LinkResourceEntity);
@@ -555,12 +618,19 @@ export class ProjectsService {
           modality: dto.modality,
           requestType: dto.requestType,
           priority: dto.priority,
-          status: ProjectStatus.READY_FOR_PRODUCTION,
+          subjectMatterExpertType: dto.subjectMatterExpertType,
+          subjectMatterExpertStatus: activation.subjectMatterExpertStatus,
+          status: activation.status,
           progress: 0,
-          expectedDeliveryDate: new Date(dto.expectedDeliveryDate),
+          activatedAt: activation.activatedAt,
+          expertConfirmedAt: activation.expertConfirmedAt,
+          expectedDeliveryDate: activation.expectedDeliveryDate,
            observations: dto.observations ?? null,
            productOwner: { id: productOwnerId },
            factoryOwner: resolvedFactoryOwnerId ? { id: resolvedFactoryOwnerId } : null,
+           institutionalState: isInstitutionalWorkflowEnabled()
+             ? ProjectInstitutionalState.INSTITUTIONAL_IN_PROGRESS
+             : null,
          }),
        );
 
@@ -581,7 +651,7 @@ export class ProjectsService {
           semesterRepository.create({
             project: { id: project.id },
             semesterNumber: semesterDto.semesterNumber,
-            factoryExpectedDate: new Date(semesterDto.factoryExpectedDate),
+            factoryExpectedDate: activation.expectedDeliveryDate,
             createdFromChange: false,
           }),
         );
@@ -592,7 +662,7 @@ export class ProjectsService {
                 project: { id: project.id },
                 semester: { id: semester.id },
                 name: subjectDto.name,
-                expectedDeliveryDate: new Date(semesterDto.factoryExpectedDate),
+                expectedDeliveryDate: activation.expectedDeliveryDate,
                 progress: 0,
                 createdFromChange: false,
               }),
@@ -632,6 +702,12 @@ export class ProjectsService {
               );
             }
           }
+
+          await this.institutionalWorkflowService.initializeSubjectOperational(
+            subject.id,
+            manager,
+            user,
+          );
         }
       }
 
@@ -662,7 +738,103 @@ export class ProjectsService {
     });
 
     const detail = await this.findOne(projectId, user);
-    void this.mailService.sendProductRequestCreatedEmail(detail);
+    if (activation.shouldNotifyFactory) {
+      void this.mailService.sendProductRequestCreatedEmail(detail);
+    }
+    if (isInstitutionalWorkflowEnabled()) {
+      await this.dataSource.transaction(async (manager) => {
+        for (const role of [UserRole.PLANEACION, UserRole.FABRICA, UserRole.LMS] as const) {
+          await this.notificationsService.notifyRole(
+            role,
+            {
+              type: NotificationType.INFO,
+              title: 'Nueva solicitud',
+              message: `Nueva solicitud: ${detail.program} — ${detail.school}`,
+              projectId: detail.id,
+              eventType: NotificationEventType.INSTITUTIONAL_REQUEST_CREATED,
+              actionUrl: `/projects/${detail.id}`,
+            },
+            manager,
+          );
+        }
+      });
+    }
+    return detail;
+  }
+
+  async confirmSubjectMatterExpert(
+    projectId: string,
+    user: UserEntity,
+  ): Promise<ProjectDetailDto> {
+    if (user.role !== UserRole.PRODUCT && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only PRODUCT or ADMIN can confirm subject matter expert');
+    }
+
+    const project = await this.projectRepo.findOne({
+      where: { id: projectId, deletedAt: IsNull() },
+      relations: { productOwner: true },
+    });
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+
+    this.assertCanManageAsProductOwner(project, user);
+
+    if (project.subjectMatterExpertType !== SubjectMatterExpertType.EXTERNAL) {
+      throw new BadRequestException('Only external subject matter expert requests can be confirmed');
+    }
+
+    if (project.subjectMatterExpertStatus === SubjectMatterExpertStatus.READY) {
+      return await this.findOne(projectId, user);
+    }
+
+    const activation = resolveActivationOnExpertConfirm();
+
+    await this.dataSource.transaction(async (manager) => {
+      await this.applyProjectActivation(projectId, manager, {
+        activatedAt: activation.activatedAt!,
+        expectedDeliveryDate: activation.expectedDeliveryDate!,
+        status: activation.status,
+        subjectMatterExpertStatus: activation.subjectMatterExpertStatus,
+        expertConfirmedAt: activation.expertConfirmedAt!,
+      });
+
+      await this.auditService.createLog(
+        {
+          entityType: 'PROJECT',
+          entityId: projectId,
+          action: AuditAction.STATUS_CHANGE,
+          userId: user.id,
+          beforeJson: {
+            subjectMatterExpertStatus: SubjectMatterExpertStatus.PENDING,
+            status: project.status,
+          },
+          afterJson: {
+            subjectMatterExpertStatus: SubjectMatterExpertStatus.READY,
+            status: activation.status,
+            expertConfirmedAt: activation.expertConfirmedAt,
+            activatedAt: activation.activatedAt,
+          },
+        },
+        manager,
+      );
+
+      await this.statusHistoryService.recordIfChanged(
+        {
+          entityType: 'PROJECT',
+          entityId: projectId,
+          fromStatus: project.status,
+          toStatus: activation.status,
+          changedById: user.id,
+        },
+        manager,
+      );
+    });
+
+    const detail = await this.findOne(projectId, user);
+    if (activation.shouldNotifyFactory) {
+      void this.mailService.sendProductRequestCreatedEmail(detail);
+    }
     return detail;
   }
 
@@ -700,6 +872,12 @@ export class ProjectsService {
 
       this.assertCanManageAsProductOwner(project, user);
       this.assertCanModifyProject(project, user);
+
+      if (project.institutionalScopeLockedAt && !project.legacyWorkflow) {
+        throw new ConflictException(
+          'No se pueden agregar semestres: el alcance de la solicitud quedó bloqueado tras la validación inicial de Planeación.',
+        );
+      }
 
       const existingSemester = await semesterRepo.findOne({
         where: { project: { id: projectId }, semesterNumber: dto.semesterNumber, deletedAt: IsNull() },
@@ -896,7 +1074,10 @@ export class ProjectsService {
     }
 
     const subjectDetailsBySemester = new Map<string, SubjectDetailDto[]>();
+    const seenSubjectIds = new Set<string>();
     for (const subject of input.subjects) {
+      if (seenSubjectIds.has(subject.id)) continue;
+      seenSubjectIds.add(subject.id);
       const semester = semestersById.get(subject.semesterId);
       if (!semester) continue;
       const obsCounts = input.obsCountMap.get(subject.id) ?? { open: 0, correctionSent: 0 };
@@ -999,6 +1180,10 @@ export class ProjectsService {
       status: input.project.status,
       progress: input.project.progress,
       expectedDeliveryDate: input.project.expectedDeliveryDate,
+      activatedAt: input.project.activatedAt,
+      subjectMatterExpertType: input.project.subjectMatterExpertType,
+      subjectMatterExpertStatus: input.project.subjectMatterExpertStatus,
+      expertConfirmedAt: input.project.expertConfirmedAt,
       productOwner: input.productOwner,
       factoryOwner: input.factoryOwner,
       createdAt: input.project.createdAt,
@@ -1045,10 +1230,70 @@ export class ProjectsService {
       status: project.status,
       progress: project.progress,
       expectedDeliveryDate: project.expectedDeliveryDate,
+      activatedAt: project.activatedAt,
+      subjectMatterExpertType: project.subjectMatterExpertType,
+      subjectMatterExpertStatus: project.subjectMatterExpertStatus,
+      expertConfirmedAt: project.expertConfirmedAt,
       productOwner: this.toOwner(project.productOwner),
       factoryOwner: project.factoryOwner ? this.toOwner(project.factoryOwner) : null,
       createdAt: project.createdAt,
     };
+  }
+
+  /**
+   * Activa la solicitud y calcula fechas de entrega (proyecto, semestres y materias).
+   */
+  async applyProjectActivation(
+    projectId: string,
+    manager: import('typeorm').EntityManager,
+    plan: {
+      activatedAt: Date;
+      expectedDeliveryDate: Date;
+      status: ProjectStatus;
+      subjectMatterExpertStatus: SubjectMatterExpertStatus;
+      expertConfirmedAt: Date;
+    },
+  ): Promise<Date> {
+    const deliveryDate = plan.expectedDeliveryDate;
+    const projectRepository = manager.getRepository(ProjectEntity);
+    const semesterRepository = manager.getRepository(SemesterEntity);
+    const subjectRepository = manager.getRepository(SubjectEntity);
+
+    await projectRepository.update(
+      { id: projectId },
+      {
+        activatedAt: plan.activatedAt,
+        expertConfirmedAt: plan.expertConfirmedAt,
+        expectedDeliveryDate: deliveryDate,
+        status: plan.status,
+        subjectMatterExpertStatus: plan.subjectMatterExpertStatus,
+      },
+    );
+
+    const semesters = await semesterRepository.find({
+      where: { projectId, deletedAt: IsNull() },
+      select: { id: true },
+    });
+
+    if (semesters.length > 0) {
+      const semesterIds = semesters.map((s) => s.id);
+      await semesterRepository
+        .createQueryBuilder()
+        .update()
+        .set({ factoryExpectedDate: deliveryDate })
+        .where('id IN (:...semesterIds)', { semesterIds })
+        .execute();
+
+      await subjectRepository
+        .createQueryBuilder()
+        .update()
+        .set({ expectedDeliveryDate: deliveryDate })
+        .where('"semesterId" IN (:...semesterIds)', { semesterIds })
+        .andWhere('"deletedAt" IS NULL')
+        .execute();
+    }
+
+    return deliveryDate;
   }
 
   private toChecklistItem(item: ChecklistItemEntity): ChecklistItemDto {

@@ -11,6 +11,8 @@ import { ObservationsModule } from './observations/observations.module';
 import { SubjectsModule } from './subjects/subjects.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FactoryModule } from './factory/factory.module';
+import { InstitutionalWorkflowModule } from './institutional-workflow/institutional-workflow.module';
+import { ProjectRadicationModule } from './project-radication/project-radication.module';
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { FactoryModule } from './factory/factory.module';
           SubjectsModule,
           NotificationsModule,
           FactoryModule,
+          InstitutionalWorkflowModule,
+          ProjectRadicationModule,
         ]
       : []),
   ],

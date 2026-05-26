@@ -6,8 +6,10 @@ export interface ProductRequestCreatedEmailContent {
   text: string;
 }
 
-function formatDate(value: Date | string): string {
+function formatDate(value: Date | string | null | undefined): string {
+  if (!value) return 'Pendiente (se calculará al activar)';
   const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return 'Pendiente (se calculará al activar)';
   return d.toLocaleString('es-CO', {
     dateStyle: 'medium',
     timeStyle: 'short',

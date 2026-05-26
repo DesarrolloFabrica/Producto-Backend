@@ -2,7 +2,9 @@ import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { ChecklistStatus } from '../common/enums/checklist-status.enum';
+import { InstitutionalOperationalState } from '../common/enums/institutional-operational-state.enum';
 import { SubjectStatus } from '../common/enums/subject-status.enum';
+import { isInstitutionalWorkflowEnabled } from '../institutional-workflow/institutional-workflow.config';
 import { StatusHistoryService } from '../audit/status-history.service';
 import { ChecklistItemEntity } from '../checklist/checklist-item.entity';
 import { ObservationsService } from '../observations/observations.service';
@@ -106,6 +108,32 @@ export class SubjectWorkflowService {
 
     if (!previousStatus) {
       throw new Error(`Subject ${subjectId} not found`);
+    }
+
+    const subjectRow = await subjectRepo.findOne({
+      where: { id: subjectId },
+      relations: { project: true },
+      select: {
+        id: true,
+        status: true,
+        operationalState: true,
+        project: { id: true, legacyWorkflow: true },
+      },
+    });
+    if (
+      isInstitutionalWorkflowEnabled() &&
+      subjectRow?.project &&
+      !subjectRow.project.legacyWorkflow
+    ) {
+      const factoryPhases = new Set<InstitutionalOperationalState>([
+        InstitutionalOperationalState.PENDING_FACTORY,
+        InstitutionalOperationalState.IN_FACTORY_PRODUCTION,
+        InstitutionalOperationalState.RETURNED_TO_FACTORY_FROM_PLANNING,
+        InstitutionalOperationalState.CHANGES_REQUESTED_BY_PRODUCT,
+      ]);
+      if (!factoryPhases.has(subjectRow.operationalState)) {
+        return previousStatus;
+      }
     }
 
     const nextStatus = await this.deriveSubjectStatus(subjectId, manager);

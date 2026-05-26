@@ -28,7 +28,12 @@ export class SemestersController {
   @Post(':semesterId/subjects')
   @UseGuards(RolesGuard)
   @Roles(UserRole.PRODUCT, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Agregar asignatura a un semestre existente' })
+  @ApiOperation({
+    summary: '[Deshabilitado] Agregar asignatura a semestre existente',
+    deprecated: true,
+    description:
+      'Deshabilitado: las asignaturas solo se definen al crear la solicitud o al agregar un semestre nuevo.',
+  })
   @ApiOkResponse({ type: ProjectDetailDto })
   @ApiUnauthorizedResponse()
   @ApiForbiddenResponse()

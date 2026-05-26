@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
+import { InstitutionalOperationalAction } from '../common/enums/institutional-operational-action.enum';
 import { ProjectDetailDto } from '../projects/dto/project-response.dto';
+import { SubjectEntity } from '../subjects/subject.entity';
 import { buildProductRequestCreatedEmail } from './templates/product-request-created.template';
 import { buildProductRequestUpdatedEmail, type ProductRequestChangeSummary } from './templates/product-request-updated.template';
 
@@ -148,5 +150,33 @@ export class MailService {
 
     const { subject, html, text } = buildProductRequestUpdatedEmail(project, changeSummary);
     await this.sendMail({ to, subject, html, text });
+  }
+
+  async sendInstitutionalTransitionEmail(params: {
+    subject: SubjectEntity;
+    action: InstitutionalOperationalAction;
+    reason?: string | null;
+  }): Promise<void> {
+    if (!this.isEmailEnabled()) return;
+
+    const to = this.getNotifyEmail();
+    if (!to) return;
+
+    const { subject, action, reason } = params;
+    const project = subject.project;
+    const title = `Workflow: ${subject.name}`;
+    const body = [
+      `<p><strong>Asignatura:</strong> ${subject.name}</p>`,
+      `<p><strong>Programa:</strong> ${project?.program ?? '—'}</p>`,
+      `<p><strong>Acción:</strong> ${action}</p>`,
+      `<p><strong>Estado operacional:</strong> ${subject.operationalState}</p>`,
+      reason ? `<p><strong>Motivo:</strong> ${reason}</p>` : '',
+    ].join('');
+    await this.sendMail({
+      to,
+      subject: title,
+      html: `<html><body>${body}</body></html>`,
+      text: `${title} — ${action}`,
+    });
   }
 }

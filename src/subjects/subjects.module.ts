@@ -14,6 +14,7 @@ import { SemesterEntity } from '../semesters/semester.entity';
 import { TopicEntity } from '../topics/topic.entity';
 import { SubjectsController } from './subjects.controller';
 import { SubjectsService } from './subjects.service';
+import { InstitutionalWorkflowModule } from '../institutional-workflow/institutional-workflow.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { SubjectsService } from './subjects.service';
     forwardRef(() => ObservationsModule),
     NotificationsModule,
     MailModule,
+    InstitutionalWorkflowModule,
   ],
   controllers: [SubjectsController],
   providers: [SubjectsService],

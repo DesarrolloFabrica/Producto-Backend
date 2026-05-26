@@ -7,6 +7,7 @@ import { WorkflowModule } from '../workflow/workflow.module';
 import { ChecklistController } from './checklist.controller';
 import { ChecklistItemEntity } from './checklist-item.entity';
 import { ChecklistService } from './checklist.service';
+import { InstitutionalWorkflowModule } from '../institutional-workflow/institutional-workflow.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { ChecklistService } from './checklist.service';
     AuditModule,
     forwardRef(() => ProjectsModule),
     WorkflowModule,
+    InstitutionalWorkflowModule,
   ],
   controllers: [ChecklistController],
   providers: [ChecklistService],

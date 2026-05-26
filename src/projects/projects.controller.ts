@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -109,6 +110,21 @@ export class ProjectsController {
     @CurrentUser() user: UserEntity,
   ): Promise<ProjectActionResponseDto> {
     return await this.projectsService.closeProject(id, user);
+  }
+
+  @Patch(':id/subject-matter-expert/confirm')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Confirmar experto temático externo y activar solicitud' })
+  @ApiOkResponse({ type: ProjectDetailDto })
+  @ApiUnauthorizedResponse()
+  @ApiForbiddenResponse()
+  @ApiNotFoundResponse()
+  async confirmSubjectMatterExpert(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<ProjectDetailDto> {
+    return await this.projectsService.confirmSubjectMatterExpert(id, user);
   }
 
   @Post(':id/start-production')

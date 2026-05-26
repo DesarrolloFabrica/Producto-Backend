@@ -20,6 +20,7 @@ import {
 } from 'class-validator';
 import { Modality } from '../../common/enums/modality.enum';
 import { Priority } from '../../common/enums/priority.enum';
+import { SubjectMatterExpertType } from '../../common/enums/subject-matter-expert-type.enum';
 import { SUBJECT_TOPICS_RANGE_MESSAGE } from '../../common/constants/subject-topics.constants';
 
 export class CreateProjectSyllabusDto {
@@ -63,9 +64,13 @@ export class CreateProjectSemesterDto {
   @Max(10)
   semesterNumber!: number;
 
-  @ApiProperty({ example: '2026-08-15T00:00:00.000Z' })
+  @ApiPropertyOptional({
+    example: '2026-08-15T00:00:00.000Z',
+    description: 'Ignorado en creación; el backend calcula la fecha al activar la solicitud.',
+  })
+  @IsOptional()
   @IsISO8601()
-  factoryExpectedDate!: string;
+  factoryExpectedDate?: string;
 
   @ApiProperty({ type: [CreateProjectSubjectDto] })
   @ValidateNested({ each: true })
@@ -89,6 +94,10 @@ export class CreateProjectDto {
   @IsEnum(Modality)
   modality!: Modality;
 
+  @ApiProperty({ enum: SubjectMatterExpertType, example: SubjectMatterExpertType.INTERNAL })
+  @IsEnum(SubjectMatterExpertType)
+  subjectMatterExpertType!: SubjectMatterExpertType;
+
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
@@ -98,9 +107,13 @@ export class CreateProjectDto {
   @IsEnum(Priority)
   priority!: Priority;
 
-  @ApiProperty({ example: '2026-12-31T00:00:00.000Z' })
+  @ApiPropertyOptional({
+    example: '2026-12-31T00:00:00.000Z',
+    description: 'Ignorado en creación; el backend calcula la fecha al activar la solicitud.',
+  })
+  @IsOptional()
   @IsISO8601()
-  expectedDeliveryDate!: string;
+  expectedDeliveryDate?: string;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()

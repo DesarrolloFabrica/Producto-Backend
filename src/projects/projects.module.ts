@@ -17,6 +17,7 @@ import { LinkResourceEntity } from './link-resource.entity';
 import { ProjectEntity } from './project.entity';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
+import { InstitutionalWorkflowModule } from '../institutional-workflow/institutional-workflow.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { ProjectsService } from './projects.service';
     WorkflowModule,
     NotificationsModule,
     MailModule,
+    InstitutionalWorkflowModule,
   ],
   controllers: [ProjectsController],
   providers: [ProjectsService],

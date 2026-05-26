@@ -35,6 +35,10 @@ import {
 import { BulkApproveSectionResponseDto } from './dto/bulk-approve-section-response.dto';
 import { ChecklistStatusUpdateResponseDto } from './dto/checklist-status-update-response.dto';
 import { UpdateChecklistStatusDto } from './dto/update-checklist-status.dto';
+import { InstitutionalWorkflowService } from '../institutional-workflow/institutional-workflow.service';
+import { ACADEMIC_REVIEW_BLOCKED_MESSAGE } from '../institutional-workflow/institutional-workflow.constants';
+import { isInstitutionalWorkflowEnabled } from '../institutional-workflow/institutional-workflow.config';
+import { isAcademicChecklistEditable } from '../institutional-workflow/institutional-workflow.transitions';
 
 const SUBJECT_REVIEWABLE_STATUSES = new Set<SubjectStatus>([
   SubjectStatus.IN_REVIEW,
@@ -73,6 +77,7 @@ export class ChecklistService {
     private readonly subjectWorkflowService: SubjectWorkflowService,
     private readonly semesterWorkflowService: SemesterWorkflowService,
     private readonly projectWorkflowService: ProjectWorkflowService,
+    private readonly institutionalWorkflowService: InstitutionalWorkflowService,
   ) {}
 
   async updateStatus(
@@ -112,6 +117,9 @@ export class ChecklistService {
 
       const validateSubjectStart = Date.now();
       this.assertCanModifyProjectContext(row, user);
+      if (user.role === UserRole.PRODUCT || user.role === UserRole.ADMIN) {
+        await this.assertProductAcademicChecklistAllowed(row.subjectId, manager);
+      }
       timings.validateSubject = Date.now() - validateSubjectStart;
 
       const previousStatus = row.checklistStatus;
@@ -250,6 +258,7 @@ export class ChecklistService {
       }
 
       const validateStateStart = Date.now();
+      await this.assertProductAcademicChecklistAllowed(subject.id, manager);
       if (!SUBJECT_REVIEWABLE_STATUSES.has(subject.status)) {
         throw new BadRequestException(
           'Subject must be IN_REVIEW, CHANGES_REQUESTED or SUBMITTED for bulk approval',
@@ -509,5 +518,20 @@ export class ChecklistService {
       knownStatuses?.projectStatus,
     );
     await this.progressService.calculateProjectProgress(projectId, manager);
+  }
+
+  private async assertProductAcademicChecklistAllowed(
+    subjectId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (!isInstitutionalWorkflowEnabled()) return;
+    const subject = await manager.getRepository(SubjectEntity).findOne({
+      where: { id: subjectId },
+      relations: { project: true },
+    });
+    if (!subject || subject.project.legacyWorkflow) return;
+    if (!isAcademicChecklistEditable(subject.operationalState)) {
+      throw new ForbiddenException(ACADEMIC_REVIEW_BLOCKED_MESSAGE);
+    }
   }
 }
