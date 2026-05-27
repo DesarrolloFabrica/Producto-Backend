@@ -100,17 +100,18 @@ export class InstitutionalWorkflowService {
     }
   }
 
-  private isFactoryMainSubjectAction(action: InstitutionalOperationalAction): boolean {
+  private isSemesterScopedSubjectAction(action: InstitutionalOperationalAction): boolean {
     return (
       action === InstitutionalOperationalAction.FACTORY_START_PRODUCTION ||
-      action === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT
+      action === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT ||
+      action === InstitutionalOperationalAction.PRODUCT_START_ACADEMIC_REVIEW
     );
   }
 
-  private assertNoSubjectFactoryMainTransition(subject: SubjectEntity, action: InstitutionalOperationalAction): void {
-    if (this.usesInstitutionalWorkflow(subject.project) && this.isFactoryMainSubjectAction(action)) {
+  private assertNoSubjectSemesterScopedTransition(subject: SubjectEntity, action: InstitutionalOperationalAction): void {
+    if (this.usesInstitutionalWorkflow(subject.project) && this.isSemesterScopedSubjectAction(action)) {
       throw new BadRequestException(
-        `La produccion institucional se gestiona por semestre. Use /projects/${subject.project.id}/semesters/${subject.semester.id}/operations`,
+        `Esta accion se gestiona por semestre. Use /projects/${subject.project.id}/semesters/${subject.semester.id}/operations`,
       );
     }
   }
@@ -178,7 +179,7 @@ export class InstitutionalWorkflowService {
     }
 
     this.assertTransitionOwnership(subject, user);
-    this.assertNoSubjectFactoryMainTransition(subject, dto.action);
+    this.assertNoSubjectSemesterScopedTransition(subject, dto.action);
 
     if (user.role !== UserRole.ADMIN) {
       const allowed = allowedActionsForRole(user.role, subject.operationalState);
@@ -213,7 +214,7 @@ export class InstitutionalWorkflowService {
       relations: { project: { productOwner: true, factoryOwner: true }, semester: true },
     });
     if (!fresh) throw new NotFoundException('Asignatura no encontrada');
-    this.assertNoSubjectFactoryMainTransition(fresh, dto.action);
+    this.assertNoSubjectSemesterScopedTransition(fresh, dto.action);
 
     if (dto.action === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) {
       await this.subjectsService.assertReadyForAcademicApproval(subjectId, user, manager);
@@ -344,7 +345,7 @@ export class InstitutionalWorkflowService {
 
     let academicApprovalBlockers: string[] = [];
     let filteredActions = this.usesInstitutionalWorkflow(subject.project)
-      ? uniqueActions.filter((action) => !this.isFactoryMainSubjectAction(action))
+      ? uniqueActions.filter((action) => !this.isSemesterScopedSubjectAction(action))
       : uniqueActions;
     if (
       uniqueActions.includes(InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) ||
@@ -365,6 +366,8 @@ export class InstitutionalWorkflowService {
       subjectId: subject.id,
       subjectName: subject.name,
       projectId: subject.project.id,
+      semesterId: subject.semester.id,
+      semesterNumber: subject.semester.semesterNumber,
       program: subject.project.program,
       school: subject.project.school,
       operationalState: subject.operationalState,

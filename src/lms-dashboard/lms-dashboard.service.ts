@@ -144,7 +144,7 @@ export class LmsDashboardService {
       .innerJoinAndSelect('t.actor', 'actor')
       .where('t.actorRole = :lmsRole', { lmsRole: UserRole.LMS })
       .orderBy('t.createdAt', 'DESC')
-      .take(15)
+      .take(8)
       .getMany();
 
     const planningReturnRows = await this.transitionRepo
@@ -156,7 +156,7 @@ export class LmsDashboardService {
         returnLms: InstitutionalOperationalAction.PLANNING_RETURN_LMS,
       })
       .orderBy('t.createdAt', 'DESC')
-      .take(10)
+      .take(8)
       .getMany();
 
     const merged = [...lmsActorRows, ...planningReturnRows]
@@ -183,7 +183,7 @@ export class LmsDashboardService {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
       unique.push(row);
-      if (unique.length >= 20) break;
+      if (unique.length >= 8) break;
     }
     return unique;
   }

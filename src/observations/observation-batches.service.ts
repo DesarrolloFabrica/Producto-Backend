@@ -167,6 +167,7 @@ export class ObservationBatchesService {
   async notifyCorrectionsToProduct(
     subjectId: string,
     user: UserEntity,
+    observationIds?: string[],
   ): Promise<ObservationBatchResponseDto> {
     if (user.role !== UserRole.FABRICA && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException();
@@ -201,7 +202,24 @@ export class ObservationBatchesService {
         order: { updatedAt: 'ASC' },
       });
 
-      if (pendingCorrections.length === 0) {
+      let toNotify = pendingCorrections;
+      if (observationIds?.length) {
+        const idSet = new Set(observationIds);
+        toNotify = pendingCorrections.filter((o) => idSet.has(o.id));
+        if (toNotify.length === 0) {
+          throw new BadRequestException(
+            'Ninguna de las correcciones seleccionadas está lista para notificar a Product.',
+          );
+        }
+        const invalid = observationIds.filter((id) => !pendingCorrections.some((o) => o.id === id));
+        if (invalid.length > 0) {
+          throw new BadRequestException(
+            'Algunas correcciones seleccionadas no están marcadas como listas o ya fueron notificadas.',
+          );
+        }
+      }
+
+      if (toNotify.length === 0) {
         throw new BadRequestException('No hay correcciones pendientes de notificar a Product.');
       }
 
@@ -220,12 +238,12 @@ export class ObservationBatchesService {
           sentAt: now,
           sentBy: { id: user.id },
           metadata: {
-            observationIds: pendingCorrections.map((o) => o.id),
+            observationIds: toNotify.map((o) => o.id),
           },
         }),
       );
 
-      for (const observation of pendingCorrections) {
+      for (const observation of toNotify) {
         observation.correctionNotificationStatus = ObservationNotificationStatus.SENT;
         await observationRepo.save(observation);
       }
@@ -236,7 +254,7 @@ export class ObservationBatchesService {
           {
             type: NotificationType.ACTION,
             title: 'Correcciones de Fábrica',
-            message: `Fábrica notificó ${pendingCorrections.length} corrección(es) en ${subject.name}.`,
+            message: `Fábrica notificó ${toNotify.length} corrección(es) en ${subject.name}.`,
             entityType: 'OBSERVATION_BATCH',
             entityId: batch.id,
             eventType: NotificationEventType.CORRECTION_BATCH_NOTIFIED,
@@ -251,7 +269,7 @@ export class ObservationBatchesService {
 
       await this.mailService.sendFactoryCorrectionsBatchEmail({
         subject,
-        observations: pendingCorrections,
+        observations: toNotify,
         batchId: batch.id,
       });
 
@@ -264,7 +282,7 @@ export class ObservationBatchesService {
           afterJson: {
             type: batch.type,
             subjectId,
-            observationCount: pendingCorrections.length,
+            observationCount: toNotify.length,
           },
         },
         manager,
@@ -275,7 +293,7 @@ export class ObservationBatchesService {
         subjectId,
         projectId: subject.project.id,
         type: batch.type,
-        observationCount: pendingCorrections.length,
+        observationCount: toNotify.length,
         sentAt: batch.sentAt,
       };
     });

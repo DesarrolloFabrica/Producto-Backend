@@ -14,6 +14,7 @@ import { ChecklistStatus } from '../common/enums/checklist-status.enum';
 import { ProjectInstitutionalState } from '../common/enums/project-institutional-state.enum';
 import { ProjectStatus } from '../common/enums/project-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
+import { FactoryProductionStatus } from '../common/enums/factory-production-status.enum';
 import { SubjectStatus } from '../common/enums/subject-status.enum';
 import { NotificationEventType } from '../common/enums/notification-event-type.enum';
 import { NotificationType } from '../common/enums/notification-type.enum';
@@ -116,6 +117,8 @@ interface ProjectSubjectRow {
   expectedDeliveryDate: Date | null;
   status: SubjectStatus;
   progress: number;
+  factoryProductionStatus: string | null;
+  factoryProductionCompletedAt: Date | null;
   createdFromChange: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -510,6 +513,8 @@ export class ProjectsService {
               s."expectedDeliveryDate",
               s.status,
               s.progress,
+              s."factory_production_status" AS "factoryProductionStatus",
+              s."factory_production_completed_at" AS "factoryProductionCompletedAt",
               s."created_from_change" AS "createdFromChange",
               s."createdAt",
               s."updatedAt"
@@ -1143,6 +1148,10 @@ export class ProjectsService {
           correctionSentCount: obsCounts.correctionSent,
         }),
         progress: subject.progress,
+        factoryProductionStatus:
+          (subject.factoryProductionStatus as FactoryProductionStatus | null) ??
+          FactoryProductionStatus.NOT_STARTED,
+        factoryProductionCompletedAt: subject.factoryProductionCompletedAt,
         createdFromChange: Boolean(subject.createdFromChange),
         topics: topicDetails,
         checklist: subjectChecklist,
@@ -1398,6 +1407,8 @@ export class ProjectsService {
               correctionSentCount: obsCounts.correctionSent,
             }),
             progress: subject.progress,
+            factoryProductionStatus: subject.factoryProductionStatus,
+            factoryProductionCompletedAt: subject.factoryProductionCompletedAt,
             createdFromChange: Boolean(subject.createdFromChange),
             topics: topicDetails,
           checklist: subjectChecklist.map((item) => this.toChecklistItemWithContext(item, subject.id, null)),

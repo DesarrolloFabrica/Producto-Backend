@@ -17,6 +17,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserEntity } from '../users/user.entity';
 import { CreateObservationMessageDto } from './dto/create-observation-message.dto';
 import { CreateObservationDto } from './dto/create-observation.dto';
+import { NotifyCorrectionsDto } from './dto/notify-corrections.dto';
 import { ReopenObservationDto } from './dto/reopen-observation.dto';
 import {
   ObservationMessageResponseDto,
@@ -143,9 +144,14 @@ export class ObservationsController {
   @ApiOkResponse({ type: ObservationBatchResponseDto })
   async notifyCorrectionsToProduct(
     @Param('subjectId', ParseUUIDPipe) subjectId: string,
+    @Body() dto: NotifyCorrectionsDto,
     @CurrentUser() user: UserEntity,
   ): Promise<ObservationBatchResponseDto> {
-    return await this.observationBatchesService.notifyCorrectionsToProduct(subjectId, user);
+    return await this.observationBatchesService.notifyCorrectionsToProduct(
+      subjectId,
+      user,
+      dto.observationIds,
+    );
   }
 
   @Post('semesters/:semesterId/observation-batches/send-to-factory')

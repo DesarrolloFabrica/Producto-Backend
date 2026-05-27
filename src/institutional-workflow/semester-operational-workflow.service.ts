@@ -23,6 +23,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ObservationsService } from '../observations/observations.service';
 import { ProjectInstitutionalWorkflowService } from '../project-radication/project-institutional-workflow.service';
 import { SemesterEntity } from '../semesters/semester.entity';
+import { FactoryProductionStatus } from '../common/enums/factory-production-status.enum';
+import { isSubjectFactoryProductionComplete } from '../subjects/factory-production.util';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { SubjectsService } from '../subjects/subjects.service';
 import { UserEntity } from '../users/user.entity';
@@ -70,7 +72,9 @@ interface SemesterSubjectSummary {
   status: SubjectStatus;
   operationalState: InstitutionalOperationalState;
   internalState: string;
+  progress: number;
   blockers: string[];
+  openObservationsCount: number;
 }
 
 export interface SemesterOperationalWorkspaceDto {
@@ -293,10 +297,15 @@ export class SemesterOperationalWorkflowService {
         ]
       : allowedActionsForRole(user.role, semester.operationalState);
     const filteredActions = [...new Set(availableActions)].filter((a) => {
-      if (a === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) return readiness.ready;
+      if (
+        a === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC ||
+        a === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT
+      ) {
+        return readiness.ready;
+      }
       return true;
     });
-    const subjectsReady = subjects.filter((s) => s.blockers.length === 0).length;
+    const subjectsReady = await this.countFactoryProductionReadySubjects(semesterId);
     return {
       semesterId: semester.id,
       semesterNumber: semester.semesterNumber,
@@ -334,6 +343,71 @@ export class SemesterOperationalWorkflowService {
     };
   }
 
+  private static readonly PLANNING_TRACKING_STATES: InstitutionalOperationalState[] = [
+    InstitutionalOperationalState.PENDING_FACTORY,
+    InstitutionalOperationalState.IN_FACTORY_PRODUCTION,
+    InstitutionalOperationalState.RETURNED_TO_FACTORY_FROM_PLANNING,
+    InstitutionalOperationalState.PENDING_LMS_UPLOAD,
+    InstitutionalOperationalState.IN_LMS_UPLOAD,
+    InstitutionalOperationalState.RETURNED_TO_LMS_FROM_PLANNING,
+    InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW,
+    InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW,
+    InstitutionalOperationalState.CHANGES_REQUESTED_BY_PRODUCT,
+    InstitutionalOperationalState.PENDING_PROJECT_RADICATION,
+    InstitutionalOperationalState.RETURNED_TO_PRODUCT_FROM_PLANNING,
+  ];
+
+  async listTrackingForPlanning(user: UserEntity): Promise<SemesterOperationalWorkItemDto[]> {
+    if (user.role !== UserRole.PLANEACION && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Solo Planeacion puede consultar seguimiento');
+    }
+    const semesters = await this.semesterRepo
+      .createQueryBuilder('sem')
+      .innerJoinAndSelect('sem.project', 'p')
+      .leftJoinAndSelect('sem.subjects', 'subjects', 'subjects.deletedAt IS NULL')
+      .where('sem.deletedAt IS NULL')
+      .andWhere('p.deletedAt IS NULL')
+      .andWhere('p.legacyWorkflow = false')
+      .andWhere('sem.operational_state IN (:...states)', {
+        states: SemesterOperationalWorkflowService.PLANNING_TRACKING_STATES,
+      })
+      .orderBy('sem.updatedAt', 'DESC')
+      .getMany();
+
+    return Promise.all(
+      semesters.map(async (s) => {
+        const openObservations = await this.countOpenObservations(s.id);
+        const ready = await this.countFactoryProductionReadySubjects(s.id);
+        const firstSubject = s.subjects?.[0];
+        return {
+          kind: 'semester',
+          semesterId: s.id,
+          semesterNumber: s.semesterNumber,
+          subjectId: firstSubject?.id ?? s.id,
+          subjectName: `Semestre ${s.semesterNumber}`,
+          projectId: s.project.id,
+          program: s.project.program,
+          school: s.project.school,
+          operationalState: s.operationalState,
+          currentResponsibleRole: responsibleRoleForState(s.operationalState),
+          stageDueAt: s.operationalStageDueAt,
+          slaStatus: this.slaService.computeSlaStatus({
+            state: s.operationalState,
+            stageEnteredAt: s.operationalStageEnteredAt,
+            stageDueAt: s.operationalStageDueAt,
+            finalizedAt: s.operationalFinalizedAt,
+          }),
+          availableActions: [],
+          lastReturnReason: s.lastReturnReason,
+          actionUrl: `/projects/${s.project.id}/semesters/${s.id}/operations`,
+          subjectsTotal: s.subjects?.length ?? 0,
+          subjectsReady: ready,
+          openObservations,
+        };
+      }),
+    );
+  }
+
   async listWorkForRole(user: UserEntity): Promise<SemesterOperationalWorkItemDto[]> {
     const states = user.role === UserRole.ADMIN
       ? [...new Set([
@@ -355,7 +429,7 @@ export class SemesterOperationalWorkflowService {
     const semesters = await qb.orderBy('sem.operational_stage_due_at', 'ASC', 'NULLS LAST').addOrderBy('sem.updatedAt', 'DESC').getMany();
     return Promise.all(semesters.map(async (s) => {
       const openObservations = await this.countOpenObservations(s.id);
-      const ready = await this.countReadySubjects(s.id, user);
+      const ready = await this.countFactoryProductionReadySubjects(s.id);
       const firstSubject = s.subjects?.[0];
       const actions = user.role === UserRole.ADMIN
         ? allowedActionsForRole(responsibleRoleForState(s.operationalState), s.operationalState)
@@ -433,7 +507,10 @@ export class SemesterOperationalWorkflowService {
     const checkAction = action ?? this.primaryReadinessActionForState(semester.operationalState);
     for (const subject of subjects) {
       if (!subject.name?.trim()) blockers.push(`Asignatura sin nombre en semestre ${semester.semesterNumber}`);
-      if (checkAction === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT && subject.progress < 100) {
+      if (
+        checkAction === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT &&
+        !isSubjectFactoryProductionComplete(subject)
+      ) {
         blockers.push(`"${subject.name}" no esta producida al 100%`);
       }
       if (checkAction === InstitutionalOperationalAction.LMS_CONFIRM_UPLOAD && subject.progress < 100) {
@@ -463,7 +540,15 @@ export class SemesterOperationalWorkflowService {
 
   private async syncSubjectAcademicStatus(semesterId: string, action: InstitutionalOperationalAction, manager: EntityManager): Promise<void> {
     const subjectRepo = manager.getRepository(SubjectEntity);
-    if (action === InstitutionalOperationalAction.FACTORY_START_PRODUCTION) await subjectRepo.update({ semester: { id: semesterId } }, { status: SubjectStatus.IN_PRODUCTION });
+    if (action === InstitutionalOperationalAction.FACTORY_START_PRODUCTION) {
+      await subjectRepo.update(
+        { semester: { id: semesterId } },
+        {
+          status: SubjectStatus.IN_PRODUCTION,
+          factoryProductionStatus: FactoryProductionStatus.IN_PROGRESS,
+        },
+      );
+    }
     if (action === InstitutionalOperationalAction.PRODUCT_START_ACADEMIC_REVIEW) await subjectRepo.update({ semester: { id: semesterId } }, { status: SubjectStatus.IN_REVIEW });
     if (action === InstitutionalOperationalAction.PRODUCT_REQUEST_CHANGES) await subjectRepo.update({ semester: { id: semesterId } }, { status: SubjectStatus.CHANGES_REQUESTED });
     if (action === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) await subjectRepo.update({ semester: { id: semesterId } }, { status: SubjectStatus.APPROVED });
@@ -577,25 +662,36 @@ export class SemesterOperationalWorkflowService {
     const subjects = await this.subjectRepo.find({ where: { semester: { id: semesterId }, deletedAt: IsNull() }, order: { name: 'ASC' } });
     return Promise.all(subjects.map(async (subject) => {
       const blockers: string[] = await this.subjectsService.getAcademicApprovalBlockers(subject.id, user).catch(() => []);
-      const hasOpenObs = await this.observationsService.hasUnresolvedObservationsForSubject(subject.id, this.semesterRepo.manager).catch(() => false);
-      if (hasOpenObs) blockers.push('Observaciones abiertas');
+      const openObservationsCount = await this.observationsService
+        .countUnresolvedObservationsForSubject(subject.id, this.semesterRepo.manager)
+        .catch(() => 0);
+      if (openObservationsCount > 0) {
+        blockers.push(
+          openObservationsCount === 1
+            ? '1 observación de Product sin resolver'
+            : `${openObservationsCount} observaciones de Product sin resolver`,
+        );
+      }
       return {
         subjectId: subject.id,
         subjectName: subject.name,
         status: subject.status,
         operationalState: subject.operationalState,
-        internalState: this.deriveInternalState(subject, blockers),
+        internalState: this.deriveInternalState(subject, openObservationsCount),
+        progress: subject.progress,
         blockers,
+        openObservationsCount,
       };
     }));
   }
 
-  private deriveInternalState(subject: SubjectEntity, blockers: string[]): string {
+  private deriveInternalState(subject: SubjectEntity, openObservationsCount: number): string {
     if (subject.operationalState === InstitutionalOperationalState.FINALIZED) return 'FINALIZED';
-    if (blockers.length > 0) return 'BLOCKED';
     if (subject.status === SubjectStatus.APPROVED) return 'ACADEMIC_APPROVED';
-    if (subject.status === SubjectStatus.CHANGES_REQUESTED) return 'HAS_OBSERVATIONS';
-    if (subject.progress >= 100) return 'READY_FOR_SEMESTER_VALIDATION';
+    if (openObservationsCount > 0 || subject.status === SubjectStatus.CHANGES_REQUESTED) {
+      return 'HAS_OBSERVATIONS';
+    }
+    if (isSubjectFactoryProductionComplete(subject)) return 'FACTORY_PRODUCTION_COMPLETE';
     if (subject.progress > 0 || subject.status === SubjectStatus.IN_PRODUCTION) return 'IN_PROGRESS';
     return 'NOT_STARTED';
   }
@@ -610,9 +706,11 @@ export class SemesterOperationalWorkflowService {
     ).then((rows: { count: number }[]) => Number(rows[0]?.count ?? 0));
   }
 
-  private async countReadySubjects(semesterId: string, user: UserEntity): Promise<number> {
-    const subjects = await this.loadSubjectSummaries(semesterId, user);
-    return subjects.filter((s) => s.blockers.length === 0).length;
+  private async countFactoryProductionReadySubjects(semesterId: string): Promise<number> {
+    const subjects = await this.subjectRepo.find({
+      where: { semester: { id: semesterId }, deletedAt: IsNull() },
+    });
+    return subjects.filter((s) => isSubjectFactoryProductionComplete(s)).length;
   }
 
   private mapCheck(c: SemesterOperationalCheckEntity): OperationalCheckDto {

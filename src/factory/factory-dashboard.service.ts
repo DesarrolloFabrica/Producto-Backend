@@ -12,6 +12,7 @@ import { SemesterEntity } from '../semesters/semester.entity';
 import { SubjectsService } from '../subjects/subjects.service';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { UserEntity } from '../users/user.entity';
+import { statesPendingForRole } from '../institutional-workflow/institutional-workflow.transitions';
 import {
   FactoryDashboardCountsDto,
   FactoryDashboardSummaryDto,
@@ -22,11 +23,28 @@ import {
   FactorySubjectsPageDto,
 } from './dto/factory-subject-work-item.dto';
 
-const FACTORY_SEMESTER_STATES: InstitutionalOperationalState[] = [
-  InstitutionalOperationalState.PENDING_FACTORY,
-  InstitutionalOperationalState.IN_FACTORY_PRODUCTION,
-  InstitutionalOperationalState.RETURNED_TO_FACTORY_FROM_PLANNING,
-  InstitutionalOperationalState.CHANGES_REQUESTED_BY_PRODUCT,
+/** Semestres donde Fábrica tiene trabajo activo (bandeja operacional). */
+const FACTORY_ACTIVE_SEMESTER_STATES = statesPendingForRole(UserRole.FABRICA);
+
+/**
+ * Semestres visibles en dashboard/paquetes: trabajo activo + seguimiento post-entrega
+ * y pendientes de liberación por Planeación.
+ */
+const FACTORY_VISIBLE_SEMESTER_STATES: InstitutionalOperationalState[] = [
+  ...new Set([
+    ...FACTORY_ACTIVE_SEMESTER_STATES,
+    InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION,
+    InstitutionalOperationalState.PENDING_PLANNING_PRODUCTION_VALIDATION,
+    InstitutionalOperationalState.PENDING_LMS_UPLOAD,
+    InstitutionalOperationalState.IN_LMS_UPLOAD,
+    InstitutionalOperationalState.PENDING_PLANNING_LMS_VALIDATION,
+    InstitutionalOperationalState.RETURNED_TO_LMS_FROM_PLANNING,
+    InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW,
+    InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW,
+    InstitutionalOperationalState.RETURNED_TO_PRODUCT_FROM_PLANNING,
+    InstitutionalOperationalState.PENDING_PROJECT_RADICATION,
+    InstitutionalOperationalState.FINALIZED,
+  ]),
 ];
 
 interface SemesterRow {
@@ -105,7 +123,7 @@ export class FactoryDashboardService {
         smeReady: SubjectMatterExpertStatus.READY,
       })
       .andWhere('semester.operational_state IN (:...states)', {
-        states: FACTORY_SEMESTER_STATES,
+        states: FACTORY_VISIBLE_SEMESTER_STATES,
       });
 
     if (user.role !== UserRole.ADMIN) {
@@ -119,10 +137,13 @@ export class FactoryDashboardService {
     }
 
     return qb
-      .select('MIN(subject.id)', 'subjectId')
+      .select('MIN(subject.id::text)', 'subjectId')
       .addSelect('semester.id', 'semesterId')
       .addSelect('COUNT(subject.id)::int', 'subjectsTotal')
-      .addSelect('COUNT(subject.id) FILTER (WHERE subject.progress >= 100)::int', 'subjectsReady')
+      .addSelect(
+        `COUNT(subject.id) FILTER (WHERE subject.factory_production_status = 'COMPLETED' OR subject.progress >= 100)::int`,
+        'subjectsReady',
+      )
       .addSelect('MAX(subject.updatedAt)', 'subjectsUpdatedAt')
       .addSelect('MIN(subject.expectedDeliveryDate)', 'expectedDeliveryDate')
       .addSelect('semester.factoryExpectedDate', 'semesterFactoryExpectedDate')
@@ -152,6 +173,19 @@ export class FactoryDashboardService {
       case InstitutionalOperationalState.RETURNED_TO_FACTORY_FROM_PLANNING:
       case InstitutionalOperationalState.CHANGES_REQUESTED_BY_PRODUCT:
         return SubjectOperationalState.CHANGES_REQUESTED;
+      case InstitutionalOperationalState.FINALIZED:
+        return SubjectOperationalState.APPROVED;
+      case InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION:
+      case InstitutionalOperationalState.PENDING_PLANNING_PRODUCTION_VALIDATION:
+      case InstitutionalOperationalState.PENDING_LMS_UPLOAD:
+      case InstitutionalOperationalState.IN_LMS_UPLOAD:
+      case InstitutionalOperationalState.PENDING_PLANNING_LMS_VALIDATION:
+      case InstitutionalOperationalState.RETURNED_TO_LMS_FROM_PLANNING:
+      case InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW:
+      case InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW:
+      case InstitutionalOperationalState.RETURNED_TO_PRODUCT_FROM_PLANNING:
+      case InstitutionalOperationalState.PENDING_PROJECT_RADICATION:
+        return SubjectOperationalState.IN_REVIEW;
       default:
         return SubjectOperationalState.IN_REVIEW;
     }

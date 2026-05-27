@@ -13,6 +13,7 @@ import { ChecklistStatus } from '../common/enums/checklist-status.enum';
 import { NotificationType } from '../common/enums/notification-type.enum';
 import { NotificationEventType } from '../common/enums/notification-event-type.enum';
 import { ProjectStatus } from '../common/enums/project-status.enum';
+import { FactoryProductionStatus } from '../common/enums/factory-production-status.enum';
 import { SubjectStatus } from '../common/enums/subject-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { AuditService } from '../audit/audit.service';
@@ -71,6 +72,8 @@ interface WorkspaceSubjectRow {
   expectedDeliveryDate: Date | null;
   status: SubjectStatus;
   progress: number;
+  factoryProductionStatus: FactoryProductionStatus;
+  factoryProductionCompletedAt: Date | null;
   createdFromChange: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -598,6 +601,10 @@ export class SubjectsService {
         }
         await checklistRepo.save(factoryItems);
         subject.status = SubjectStatus.IN_PRODUCTION;
+        if (usesInstitutional) {
+          subject.factoryProductionStatus = FactoryProductionStatus.IN_PROGRESS;
+          subject.factoryProductionCompletedAt = null;
+        }
         await subjectRepo.save(subject);
 
         if (usesInstitutional) {
@@ -640,10 +647,34 @@ export class SubjectsService {
         }
         await checklistRepo.save(factoryItems);
 
-        await this.progressService.calculateSubjectProgress(subject.id, manager);
-
+        const calculatedProgress = await this.progressService.calculateSubjectProgress(subject.id, manager);
         if (usesInstitutional) {
+          subject.factoryProductionStatus = FactoryProductionStatus.COMPLETED;
+          subject.factoryProductionCompletedAt = new Date();
+          const progress = calculatedProgress < 100 ? 100 : calculatedProgress;
+          await subjectRepo.update(subject.id, {
+            factoryProductionStatus: FactoryProductionStatus.COMPLETED,
+            factoryProductionCompletedAt: subject.factoryProductionCompletedAt,
+            progress,
+          });
           postInstitutionalAction = null;
+          await this.auditService.createLog(
+            {
+              entityType: 'SUBJECT',
+              entityId: subject.id,
+              action: AuditAction.STATUS_CHANGE,
+              userId: user.id,
+              beforeJson: { status: previousSubjectStatus, progress: subject.progress },
+              afterJson: {
+                status: subject.status,
+                productionStatus: dto.status,
+                factoryProductionStatus: FactoryProductionStatus.COMPLETED,
+                progress,
+              },
+            },
+            manager,
+          );
+          await this.progressService.calculateProjectProgress(subject.project.id, manager);
         } else {
           await this.applySubjectStatusChange(
             subject,
@@ -740,6 +771,8 @@ export class SubjectsService {
           s."expectedDeliveryDate",
           s.status,
           s.progress,
+          s.factory_production_status AS "factoryProductionStatus",
+          s.factory_production_completed_at AS "factoryProductionCompletedAt",
           s."created_from_change" AS "createdFromChange",
           s."createdAt",
           s."updatedAt"
@@ -980,6 +1013,8 @@ export class SubjectsService {
         correctionSentCount,
       }),
       progress: subject.progress,
+      factoryProductionStatus: subject.factoryProductionStatus,
+      factoryProductionCompletedAt: subject.factoryProductionCompletedAt,
       createdFromChange: Boolean(subject.createdFromChange),
       topics: topicDetails,
       checklist: checklist
@@ -1101,6 +1136,8 @@ export class SubjectsService {
         correctionSentCount,
       }),
       progress: subject.progress,
+      factoryProductionStatus: subject.factoryProductionStatus,
+      factoryProductionCompletedAt: subject.factoryProductionCompletedAt,
       createdFromChange: Boolean(subject.createdFromChange),
       topics: topicDetails,
       checklist: subjectChecklist.map((item) => this.toWorkspaceChecklistItem(item, subject.id, null)),
@@ -1165,7 +1202,7 @@ export class SubjectsService {
               subject: { id: subject.id },
               topic: { id: topic.id },
               label,
-              status: ChecklistStatus.PENDIENTE,
+              status: ChecklistStatus.ENTREGADO,
               ownerRole: UserRole.FABRICA,
             }),
           );
@@ -1370,16 +1407,6 @@ export class SubjectsService {
 
     const pendingFactory = factoryItems.filter((item) => item.status !== ChecklistStatus.APROBADO);
     if (pendingFactory.length > 0) {
-      const notDelivered = pendingFactory.filter(
-        (item) =>
-          item.status === ChecklistStatus.PENDIENTE ||
-          item.status === ChecklistStatus.EN_PRODUCCION,
-      );
-      if (notDelivered.length > 0) {
-        throw new BadRequestException(
-          'Fábrica aún no ha entregado todos los materiales de temas/gránulos',
-        );
-      }
       throw new BadRequestException(
         `Debe aprobar todos los ítems de temas/gránulos (${pendingFactory.length} pendiente(s)) antes de la aprobación académica`,
       );

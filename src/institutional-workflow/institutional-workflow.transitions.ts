@@ -117,7 +117,7 @@ export function responsibleRoleForState(
     case InstitutionalOperationalState.PENDING_PLANNING_PRODUCTION_VALIDATION:
     case InstitutionalOperationalState.PENDING_PLANNING_LMS_VALIDATION:
     case InstitutionalOperationalState.PENDING_PROJECT_RADICATION:
-      return UserRole.PRODUCT;
+      return UserRole.PLANEACION;
     case InstitutionalOperationalState.FINALIZED:
       return UserRole.PLANEACION;
     case InstitutionalOperationalState.RETURNED_TO_PRODUCT_FROM_PLANNING:

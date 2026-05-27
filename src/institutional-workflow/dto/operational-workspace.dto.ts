@@ -112,6 +112,12 @@ export class OperationalWorkspaceDto {
   projectId!: string;
 
   @ApiProperty()
+  semesterId!: string;
+
+  @ApiProperty()
+  semesterNumber!: number;
+
+  @ApiProperty()
   program!: string;
 
   @ApiProperty()

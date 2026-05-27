@@ -6,6 +6,7 @@ import { SubjectMatterExpertStatus } from '../../common/enums/subject-matter-exp
 import { SubjectMatterExpertType } from '../../common/enums/subject-matter-expert-type.enum';
 import { ChecklistStatus } from '../../common/enums/checklist-status.enum';
 import { SemesterStatus } from '../../common/enums/semester-status.enum';
+import { FactoryProductionStatus } from '../../common/enums/factory-production-status.enum';
 import { SubjectOperationalState } from '../../common/enums/subject-operational-state.enum';
 import { SubjectStatus } from '../../common/enums/subject-status.enum';
 import { UserRole } from '../../common/enums/user-role.enum';
@@ -203,6 +204,12 @@ export class SubjectDetailDto {
 
   @ApiProperty()
   progress!: number;
+
+  @ApiProperty({ enum: FactoryProductionStatus })
+  factoryProductionStatus!: FactoryProductionStatus;
+
+  @ApiPropertyOptional({ nullable: true })
+  factoryProductionCompletedAt!: Date | null;
 
   @ApiProperty({ description: 'True si la materia fue agregada después de la solicitud inicial' })
   createdFromChange!: boolean;

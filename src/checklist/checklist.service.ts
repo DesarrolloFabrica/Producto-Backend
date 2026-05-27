@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository, SelectQueryBuilder } from 'typeorm';
 import { AuditAction } from '../common/enums/audit-action.enum';
 import { ChecklistStatus } from '../common/enums/checklist-status.enum';
 import { ProjectStatus } from '../common/enums/project-status.enum';
@@ -22,7 +22,8 @@ import { ProgressService } from '../workflow/progress.service';
 import { ProjectWorkflowService } from '../workflow/project-workflow.service';
 import { SemesterWorkflowService } from '../workflow/semester-workflow.service';
 import { SubjectWorkflowService } from '../workflow/subject-workflow.service';
-import { labelBelongsToChecklistCategory } from './checklist.constants';
+import { CHECKLIST_CATEGORY_LABELS } from './checklist.constants';
+import { ProjectEntity } from '../projects/project.entity';
 import {
   assertChecklistStatusTransition,
   isEligibleForProductBulkApprove,
@@ -38,6 +39,7 @@ import { UpdateChecklistStatusDto } from './dto/update-checklist-status.dto';
 import { InstitutionalWorkflowService } from '../institutional-workflow/institutional-workflow.service';
 import { ACADEMIC_REVIEW_BLOCKED_MESSAGE } from '../institutional-workflow/institutional-workflow.constants';
 import { isInstitutionalWorkflowEnabled } from '../institutional-workflow/institutional-workflow.config';
+import { InstitutionalOperationalState } from '../common/enums/institutional-operational-state.enum';
 import { isAcademicChecklistEditable } from '../institutional-workflow/institutional-workflow.transitions';
 
 const SUBJECT_REVIEWABLE_STATUSES = new Set<SubjectStatus>([
@@ -46,6 +48,21 @@ const SUBJECT_REVIEWABLE_STATUSES = new Set<SubjectStatus>([
   SubjectStatus.SUBMITTED,
 ]);
 
+interface BulkApproveContextRow {
+  subjectId: string;
+  subjectStatus: SubjectStatus;
+  subjectProgress: number;
+  subjectOperationalState: InstitutionalOperationalState;
+  semesterId: string;
+  semesterStatus: SemesterStatus;
+  projectId: string;
+  projectStatus: ProjectStatus;
+  projectProgress: number;
+  projectLegacyWorkflow: boolean;
+  productOwnerId: string | null;
+  factoryOwnerId: string | null;
+}
+
 interface ChecklistStatusContextRow {
   itemId: string;
   checklistStatus: ChecklistStatus;
@@ -53,11 +70,13 @@ interface ChecklistStatusContextRow {
   subjectId: string;
   subjectStatus: SubjectStatus;
   subjectProgress: number;
+  subjectOperationalState: InstitutionalOperationalState | null;
   semesterId: string;
   semesterStatus: SemesterStatus;
   projectId: string;
   projectStatus: ProjectStatus;
   projectProgress: number;
+  projectLegacyWorkflow: boolean;
   productOwnerId: string | null;
   factoryOwnerId: string | null;
 }
@@ -166,32 +185,52 @@ export class ChecklistService {
       timings.history = Date.now() - historyStart;
 
       const recalculateProgressStart = Date.now();
-      const subjectProgress = await this.progressService.calculateSubjectProgress(
-        row.subjectId,
-        manager,
-      );
-      const subjectStatus = await this.subjectWorkflowService.updateSubjectStatus(
-        row.subjectId,
-        user.id,
-        manager,
-        row.subjectStatus,
-      );
-      const semesterStatus = await this.semesterWorkflowService.updateSemesterStatus(
-        row.semesterId,
-        user.id,
-        manager,
-        row.semesterStatus,
-      );
-      const projectStatus = await this.projectWorkflowService.updateProjectStatus(
-        row.projectId,
-        user.id,
-        manager,
-        row.projectStatus,
-      );
-      const projectProgress = await this.progressService.calculateProjectProgress(
-        row.projectId,
-        manager,
-      );
+      let subjectStatus = row.subjectStatus;
+      let semesterStatus = row.semesterStatus;
+      let projectStatus = row.projectStatus;
+      let subjectProgress = Number(row.subjectProgress);
+      let projectProgress = Number(row.projectProgress);
+
+      if (
+        this.isInstitutionalAcademicChecklist({
+          operationalState: row.subjectOperationalState,
+          projectLegacyWorkflow: row.projectLegacyWorkflow,
+        })
+      ) {
+        const progress = await this.progressService.recalculateTreeFromSubject(
+          row.subjectId,
+          manager,
+        );
+        subjectProgress = progress.subjectProgress;
+        projectProgress = progress.projectProgress;
+      } else {
+        subjectProgress = await this.progressService.calculateSubjectProgress(
+          row.subjectId,
+          manager,
+        );
+        subjectStatus = await this.subjectWorkflowService.updateSubjectStatus(
+          row.subjectId,
+          user.id,
+          manager,
+          row.subjectStatus,
+        );
+        semesterStatus = await this.semesterWorkflowService.updateSemesterStatus(
+          row.semesterId,
+          user.id,
+          manager,
+          row.semesterStatus,
+        );
+        projectStatus = await this.projectWorkflowService.updateProjectStatus(
+          row.projectId,
+          user.id,
+          manager,
+          row.projectStatus,
+        );
+        projectProgress = await this.progressService.calculateProjectProgress(
+          row.projectId,
+          manager,
+        );
+      }
       timings.recalculateProgress = Date.now() - recalculateProgressStart;
 
       const dtoStart = Date.now();
@@ -225,41 +264,40 @@ export class ChecklistService {
 
     return await this.dataSource.transaction(async (manager) => {
       const timings = {
-        loadSubject: 0,
+        loadContext: 0,
         validateState: 0,
         loadItems: 0,
         updateItems: 0,
-        dto: 0,
+        audit: 0,
+        recalculateProgress: 0,
         total: 0,
       };
       const totalStart = Date.now();
       const checklistRepo = manager.getRepository(ChecklistItemEntity);
-      const subjectRepo = manager.getRepository(SubjectEntity);
 
-      const loadSubjectStart = Date.now();
-      const subject = await subjectRepo.findOne({
-        where: { id: dto.subjectId },
-        relations: {
-          project: { productOwner: true, factoryOwner: true },
-          semester: true,
-          checklist: { topic: true },
-        },
-      });
-      timings.loadSubject = Date.now() - loadSubjectStart;
+      const loadContextStart = Date.now();
+      const ctx = await this.loadBulkApproveContext(dto.subjectId, manager);
+      timings.loadContext = Date.now() - loadContextStart;
 
-      if (!subject) {
+      if (!ctx) {
         throw new NotFoundException('Subject not found');
       }
 
-      const project = subject.project;
+      const project = this.projectFromBulkApproveContext(ctx);
       this.projectsService.assertCanModifyProject(project, user);
       if (user.role === UserRole.PRODUCT) {
         this.projectsService.assertCanManageAsProductOwner(project, user);
       }
 
       const validateStateStart = Date.now();
-      await this.assertProductAcademicChecklistAllowed(subject.id, manager);
-      if (!SUBJECT_REVIEWABLE_STATUSES.has(subject.status)) {
+      if (
+        isInstitutionalWorkflowEnabled() &&
+        !ctx.projectLegacyWorkflow &&
+        !isAcademicChecklistEditable(ctx.subjectOperationalState)
+      ) {
+        throw new ForbiddenException(ACADEMIC_REVIEW_BLOCKED_MESSAGE);
+      }
+      if (!SUBJECT_REVIEWABLE_STATUSES.has(ctx.subjectStatus)) {
         throw new BadRequestException(
           'Subject must be IN_REVIEW, CHANGES_REQUESTED or SUBMITTED for bulk approval',
         );
@@ -267,7 +305,7 @@ export class ChecklistService {
       timings.validateState = Date.now() - validateStateStart;
 
       const loadItemsStart = Date.now();
-      const scopedItems = this.filterItemsForBulkScope(subject.checklist ?? [], dto);
+      const scopedItems = await this.loadScopedChecklistItemsForBulk(dto, manager);
       const toUpdate = scopedItems.filter(isEligibleForProductBulkApprove);
       timings.loadItems = Date.now() - loadItemsStart;
 
@@ -287,11 +325,15 @@ export class ChecklistService {
       }
       timings.updateItems = Date.now() - updateItemsStart;
 
+      let subjectProgress = ctx.subjectProgress;
+      let projectProgress = ctx.projectProgress;
+
       if (updatedItemIds.length > 0) {
+        const auditStart = Date.now();
         await this.auditService.createLog(
           {
             entityType: RelatedEntityType.SUBJECT,
-            entityId: subject.id,
+            entityId: ctx.subjectId,
             action: AuditAction.CHECKLIST_SECTION_BULK_APPROVED,
             userId: user.id,
             beforeJson: {
@@ -306,40 +348,52 @@ export class ChecklistService {
           },
           manager,
         );
+        timings.audit = Date.now() - auditStart;
 
-        await this.recalculateWorkflowAfterChecklistChange(
-          subject.id,
-          subject.semester.id,
-          project.id,
-          user.id,
-          manager,
-          {
-            subjectStatus: subject.status,
-            semesterStatus: subject.semester.status,
-            projectStatus: project.status,
-          },
-        );
+        const recalculateStart = Date.now();
+        const progress = this.isInstitutionalAcademicChecklist({
+          operationalState: ctx.subjectOperationalState,
+          projectLegacyWorkflow: ctx.projectLegacyWorkflow,
+        })
+          ? await this.progressService.recalculateTreeFromSubject(ctx.subjectId, manager)
+          : await this.recalculateWorkflowAfterChecklistChange(
+              ctx.subjectId,
+              ctx.semesterId,
+              ctx.projectId,
+              user.id,
+              manager,
+              {
+                subjectStatus: ctx.subjectStatus,
+                semesterStatus: ctx.semesterStatus,
+                projectStatus: ctx.projectStatus,
+              },
+            );
+        timings.recalculateProgress = Date.now() - recalculateStart;
+        subjectProgress = progress.subjectProgress;
+        projectProgress = progress.projectProgress;
       }
 
       const result = {
         countUpdated: updatedItemIds.length,
-        subjectId: subject.id,
-        projectId: project.id,
+        subjectId: ctx.subjectId,
+        projectId: ctx.projectId,
         alreadyApproved: updatedItemIds.length === 0,
         updatedItemIds,
+        subjectProgress,
+        projectProgress,
       };
 
-      timings.dto = 0;
       timings.total = Date.now() - totalStart;
 
       if (process.env.NODE_ENV !== 'production') {
         this.logger.debug(
           `bulkApproveSection(${dto.subjectId},${dto.scope}) ` +
-            `loadSubject=${timings.loadSubject}ms ` +
+            `loadContext=${timings.loadContext}ms ` +
             `validateState=${timings.validateState}ms ` +
             `loadItems=${timings.loadItems}ms ` +
             `updateItems=${timings.updateItems}ms ` +
-            `dto=${timings.dto}ms ` +
+            `audit=${timings.audit}ms ` +
+            `recalculateProgress=${timings.recalculateProgress}ms ` +
             `total=${timings.total}ms`,
         );
       }
@@ -367,11 +421,13 @@ export class ChecklistService {
         'subject.id AS "subjectId"',
         'subject.status AS "subjectStatus"',
         'subject.progress AS "subjectProgress"',
+        'subject.operationalState AS "subjectOperationalState"',
         'semester.id AS "semesterId"',
         'semester.status AS "semesterStatus"',
         'project.id AS "projectId"',
         'project.status AS "projectStatus"',
         'project.progress AS "projectProgress"',
+        'project.legacyWorkflow AS "projectLegacyWorkflow"',
         'productOwner.id AS "productOwnerId"',
         'factoryOwner.id AS "factoryOwnerId"',
       ])
@@ -457,33 +513,155 @@ export class ChecklistService {
     );
   }
 
-  private filterItemsForBulkScope(
-    items: ChecklistItemEntity[],
+  private async loadBulkApproveContext(
+    subjectId: string,
+    manager: EntityManager,
+  ): Promise<BulkApproveContextRow | null> {
+    const raw = await manager
+      .getRepository(SubjectEntity)
+      .createQueryBuilder('s')
+      .innerJoin('s.project', 'p')
+      .innerJoin('s.semester', 'sem')
+      .select('s.id', 'subjectId')
+      .addSelect('s.status', 'subjectStatus')
+      .addSelect('s.progress', 'subjectProgress')
+      .addSelect('s.operationalState', 'subjectOperationalState')
+      .addSelect('sem.id', 'semesterId')
+      .addSelect('sem.status', 'semesterStatus')
+      .addSelect('p.id', 'projectId')
+      .addSelect('p.status', 'projectStatus')
+      .addSelect('p.progress', 'projectProgress')
+      .addSelect('p.legacyWorkflow', 'projectLegacyWorkflow')
+      .addSelect('p.productOwnerId', 'productOwnerId')
+      .addSelect('p.factoryOwnerId', 'factoryOwnerId')
+      .where('s.id = :subjectId', { subjectId })
+      .andWhere('s.deletedAt IS NULL')
+      .getRawOne<{
+        subjectId: string;
+        subjectStatus: SubjectStatus;
+        subjectProgress: string | number;
+        subjectOperationalState: InstitutionalOperationalState;
+        semesterId: string;
+        semesterStatus: SemesterStatus;
+        projectId: string;
+        projectStatus: ProjectStatus;
+        projectProgress: string | number;
+        projectLegacyWorkflow: boolean;
+        productOwnerId: string | null;
+        factoryOwnerId: string | null;
+      }>();
+
+    if (!raw) return null;
+
+    return {
+      subjectId: raw.subjectId,
+      subjectStatus: raw.subjectStatus,
+      subjectProgress: Number(raw.subjectProgress ?? 0),
+      subjectOperationalState: raw.subjectOperationalState,
+      semesterId: raw.semesterId,
+      semesterStatus: raw.semesterStatus,
+      projectId: raw.projectId,
+      projectStatus: raw.projectStatus,
+      projectProgress: Number(raw.projectProgress ?? 0),
+      projectLegacyWorkflow: Boolean(raw.projectLegacyWorkflow),
+      productOwnerId: raw.productOwnerId,
+      factoryOwnerId: raw.factoryOwnerId,
+    };
+  }
+
+  private projectFromBulkApproveContext(ctx: BulkApproveContextRow): ProjectEntity {
+    return {
+      id: ctx.projectId,
+      status: ctx.projectStatus,
+      legacyWorkflow: ctx.projectLegacyWorkflow,
+      productOwner: ctx.productOwnerId ? ({ id: ctx.productOwnerId } as UserEntity) : null,
+      factoryOwner: ctx.factoryOwnerId ? ({ id: ctx.factoryOwnerId } as UserEntity) : null,
+    } as ProjectEntity;
+  }
+
+  private async loadScopedChecklistItemsForBulk(
     dto: BulkApproveSectionDto,
-  ): ChecklistItemEntity[] {
+    manager: EntityManager,
+  ): Promise<ChecklistItemEntity[]> {
+    const qb = manager
+      .getRepository(ChecklistItemEntity)
+      .createQueryBuilder('item')
+      .select('item.id', 'id')
+      .addSelect('item.status', 'status')
+      .addSelect('item.ownerRole', 'ownerRole')
+      .addSelect('item.label', 'label')
+      .addSelect('item.topicId', 'topicId')
+      .where('item.subjectId = :subjectId', { subjectId: dto.subjectId });
+
+    this.applyBulkScopeToChecklistQuery(qb, dto);
+
+    const rows = await qb.getRawMany<{
+      id: string;
+      status: ChecklistStatus;
+      ownerRole: UserRole;
+      label: string;
+      topicId: string | null;
+    }>();
+
+    return rows.map(
+      (row) =>
+        ({
+          id: row.id,
+          status: row.status,
+          ownerRole: row.ownerRole,
+          label: row.label,
+          topic: row.topicId ? { id: row.topicId } : null,
+        }) as ChecklistItemEntity,
+    );
+  }
+
+  private applyBulkScopeToChecklistQuery(
+    qb: SelectQueryBuilder<ChecklistItemEntity>,
+    dto: BulkApproveSectionDto,
+  ): void {
     switch (dto.scope) {
       case BulkApproveSectionScope.SUBJECT:
-        return items.filter((item) => !item.topic?.id && item.ownerRole === UserRole.PRODUCT);
+        qb.andWhere('item.topicId IS NULL').andWhere('item.ownerRole = :productRole', {
+          productRole: UserRole.PRODUCT,
+        });
+        return;
       case BulkApproveSectionScope.CATEGORY: {
-        if (!dto.category?.trim()) {
+        const categoryId = dto.category?.trim();
+        if (!categoryId) {
           throw new BadRequestException('category is required when scope is CATEGORY');
         }
-        return items.filter(
-          (item) =>
-            !item.topic?.id &&
-            item.ownerRole === UserRole.PRODUCT &&
-            labelBelongsToChecklistCategory(item.label, dto.category!.trim()),
-        );
+        const labels = CHECKLIST_CATEGORY_LABELS[categoryId];
+        if (!labels?.length) {
+          throw new BadRequestException(`Invalid checklist category: ${categoryId}`);
+        }
+        qb.andWhere('item.topicId IS NULL')
+          .andWhere('item.ownerRole = :productRole', { productRole: UserRole.PRODUCT })
+          .andWhere('LOWER(TRIM(item.label)) IN (:...categoryLabels)', {
+            categoryLabels: labels.map((label) => label.trim().toLowerCase()),
+          });
+        return;
       }
-      case BulkApproveSectionScope.TOPIC: {
+      case BulkApproveSectionScope.TOPIC:
         if (!dto.topicId) {
           throw new BadRequestException('topicId is required when scope is TOPIC');
         }
-        return items.filter((item) => item.topic?.id === dto.topicId);
-      }
+        qb.andWhere('item.topicId = :topicId', { topicId: dto.topicId });
+        return;
       default:
         throw new BadRequestException('Invalid bulk approve scope');
     }
+  }
+
+  private isInstitutionalAcademicChecklist(params: {
+    operationalState: InstitutionalOperationalState | null;
+    projectLegacyWorkflow: boolean;
+  }): boolean {
+    return (
+      isInstitutionalWorkflowEnabled() &&
+      !params.projectLegacyWorkflow &&
+      params.operationalState != null &&
+      isAcademicChecklistEditable(params.operationalState)
+    );
   }
 
   private async recalculateWorkflowAfterChecklistChange(
@@ -497,8 +675,11 @@ export class ChecklistService {
       semesterStatus?: SemesterStatus;
       projectStatus?: ProjectStatus;
     },
-  ): Promise<void> {
-    await this.progressService.calculateSubjectProgress(subjectId, manager);
+  ): Promise<{ subjectProgress: number; projectProgress: number }> {
+    const subjectProgress = await this.progressService.calculateSubjectProgress(
+      subjectId,
+      manager,
+    );
     await this.subjectWorkflowService.updateSubjectStatus(
       subjectId,
       userId,
@@ -517,18 +698,27 @@ export class ChecklistService {
       manager,
       knownStatuses?.projectStatus,
     );
-    await this.progressService.calculateProjectProgress(projectId, manager);
+    const projectProgress = await this.progressService.calculateProjectProgress(
+      projectId,
+      manager,
+    );
+    return { subjectProgress, projectProgress };
   }
 
   private async assertProductAcademicChecklistAllowed(
     subjectId: string,
     manager: EntityManager,
+    subjectPrefetched?: Pick<SubjectEntity, 'id' | 'operationalState'> & {
+      project: Pick<SubjectEntity['project'], 'legacyWorkflow'>;
+    },
   ): Promise<void> {
     if (!isInstitutionalWorkflowEnabled()) return;
-    const subject = await manager.getRepository(SubjectEntity).findOne({
-      where: { id: subjectId },
-      relations: { project: true },
-    });
+    const subject =
+      subjectPrefetched ??
+      (await manager.getRepository(SubjectEntity).findOne({
+        where: { id: subjectId },
+        relations: { project: true },
+      }));
     if (!subject || subject.project.legacyWorkflow) return;
     if (!isAcademicChecklistEditable(subject.operationalState)) {
       throw new ForbiddenException(ACADEMIC_REVIEW_BLOCKED_MESSAGE);

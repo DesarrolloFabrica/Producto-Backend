@@ -96,6 +96,12 @@ export class InstitutionalWorkflowController {
     return this.semesterWorkflowService.listWorkForRole(user);
   }
 
+  @Get('planning/tracking')
+  @Roles(UserRole.PLANEACION, UserRole.ADMIN)
+  async planningTracking(@CurrentUser() user: UserEntity): Promise<SemesterOperationalWorkItemDto[]> {
+    return this.semesterWorkflowService.listTrackingForPlanning(user);
+  }
+
   @Get('lms/work')
   @Roles(UserRole.LMS, UserRole.ADMIN)
   async lmsWork(@CurrentUser() user: UserEntity): Promise<SemesterOperationalWorkItemDto[]> {
