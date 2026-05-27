@@ -43,10 +43,12 @@ import { ProjectInstitutionalWorkflowService } from '../project-radication/proje
 import { InstitutionalWorkflowSlaService } from './institutional-workflow-sla.service';
 import {
   allowedActionsForRole,
+  filterSubjectAvailableActions,
   isAcademicChecklistEditable,
   isAcademicReviewReady,
   isCorrectionInFactory,
   isReturnAction,
+  isSemesterScopedOperationalAction,
   resolveNextInstitutionalState,
   responsibleRoleForState,
   statesPendingForRole,
@@ -101,11 +103,7 @@ export class InstitutionalWorkflowService {
   }
 
   private isSemesterScopedSubjectAction(action: InstitutionalOperationalAction): boolean {
-    return (
-      action === InstitutionalOperationalAction.FACTORY_START_PRODUCTION ||
-      action === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT ||
-      action === InstitutionalOperationalAction.PRODUCT_START_ACADEMIC_REVIEW
-    );
+    return isSemesterScopedOperationalAction(action);
   }
 
   private assertNoSubjectSemesterScopedTransition(subject: SubjectEntity, action: InstitutionalOperationalAction): void {
@@ -344,9 +342,10 @@ export class InstitutionalWorkflowService {
     const correctionInFactory = isCorrectionInFactory(subject.operationalState);
 
     let academicApprovalBlockers: string[] = [];
-    let filteredActions = this.usesInstitutionalWorkflow(subject.project)
-      ? uniqueActions.filter((action) => !this.isSemesterScopedSubjectAction(action))
-      : uniqueActions;
+    let filteredActions = filterSubjectAvailableActions(
+      uniqueActions,
+      this.usesInstitutionalWorkflow(subject.project),
+    );
     if (
       uniqueActions.includes(InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) ||
       subject.operationalState === InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW
@@ -427,10 +426,12 @@ export class InstitutionalWorkflowService {
 
     return subjects.map((s) => {
       const role = user.role === UserRole.ADMIN ? responsibleRoleForState(s.operationalState) : user.role;
-      const actions =
+      const actions = filterSubjectAvailableActions(
         user.role === UserRole.ADMIN
           ? allowedActionsForRole(responsibleRoleForState(s.operationalState), s.operationalState)
-          : allowedActionsForRole(user.role, s.operationalState);
+          : allowedActionsForRole(user.role, s.operationalState),
+        true,
+      );
       return {
         subjectId: s.id,
         subjectName: s.name,

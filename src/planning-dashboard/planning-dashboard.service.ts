@@ -10,6 +10,7 @@ import { OperationalTransitionEntity } from '../institutional-workflow/operation
 import { ProjectOperationalTransitionEntity } from '../project-radication/project-operational-transition.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
+import { SemesterEntity } from '../semesters/semester.entity';
 import { UserEntity } from '../users/user.entity';
 import {
   PlanningActivityItemDto,
@@ -56,6 +57,8 @@ export class PlanningDashboardService {
   constructor(
     @InjectRepository(SubjectEntity)
     private readonly subjectRepo: Repository<SubjectEntity>,
+    @InjectRepository(SemesterEntity)
+    private readonly semesterRepo: Repository<SemesterEntity>,
     @InjectRepository(ProjectEntity)
     private readonly projectRepo: Repository<ProjectEntity>,
     @InjectRepository(OperationalTransitionEntity)
@@ -85,19 +88,19 @@ export class PlanningDashboardService {
   }
 
   private async loadKpis(): Promise<PlanningDashboardKpisDto> {
-    const subjectCounts = await this.subjectRepo
-      .createQueryBuilder('subject')
-      .innerJoin('subject.project', 'project')
-      .select('subject.operational_state', 'state')
-      .addSelect('COUNT(*)::int', 'count')
-      .where('subject.deletedAt IS NULL')
+    const programCounts = await this.semesterRepo
+      .createQueryBuilder('sem')
+      .innerJoin('sem.project', 'project')
+      .select('sem.operational_state', 'state')
+      .addSelect('COUNT(DISTINCT project.id)::int', 'count')
+      .where('sem.deletedAt IS NULL')
       .andWhere('project.deletedAt IS NULL')
       .andWhere('project.legacyWorkflow = false')
-      .andWhere('subject.operational_state IN (:...states)', { states: PLANNING_PENDING_STATES })
-      .groupBy('subject.operational_state')
+      .andWhere('sem.operational_state IN (:...states)', { states: PLANNING_PENDING_STATES })
+      .groupBy('sem.operational_state')
       .getRawMany<{ state: InstitutionalOperationalState; count: number }>();
 
-    const countByState = new Map(subjectCounts.map((r) => [r.state, Number(r.count)]));
+    const countByState = new Map(programCounts.map((r) => [r.state, Number(r.count)]));
 
     const [radicationsPending, inProgress, finalized] = await Promise.all([
       this.projectRepo

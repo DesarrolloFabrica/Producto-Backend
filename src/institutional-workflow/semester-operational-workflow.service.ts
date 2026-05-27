@@ -46,6 +46,8 @@ import {
 } from './institutional-workflow.transitions';
 import { OPERATIONAL_CHECK_DEFINITIONS } from './institutional-workflow.constants';
 import { InstitutionalWorkflowSlaService } from './institutional-workflow-sla.service';
+import { ProgramOperationalWorkItemDto } from './dto/program-operational-work-item.dto';
+import { aggregateSemestersToPrograms } from './program-operational-aggregator';
 import { SemesterOperationalCheckEntity } from './semester-operational-check.entity';
 import { SemesterOperationalTransitionEntity } from './semester-operational-transition.entity';
 
@@ -168,14 +170,16 @@ export class SemesterOperationalWorkflowService {
       operationalStageDueAt: this.slaService.computeStageDueAt(now, initial),
       lockVersion: 0,
     });
-    for (const def of OPERATIONAL_CHECK_DEFINITIONS) {
-      await checkRepo.save(checkRepo.create({
-        semester: { id: semesterId },
-        checkKey: def.key,
-        label: def.label,
-        status: OperationalCheckStatus.PENDING,
-      }));
-    }
+    await checkRepo.save(
+      OPERATIONAL_CHECK_DEFINITIONS.map((def) =>
+        checkRepo.create({
+          semester: { id: semesterId },
+          checkKey: def.key,
+          label: def.label,
+          status: OperationalCheckStatus.PENDING,
+        }),
+      ),
+    );
     await transitionRepo.save(transitionRepo.create({
       semester: { id: semesterId },
       fromState: null,
@@ -185,6 +189,27 @@ export class SemesterOperationalWorkflowService {
       actorRole: actor.role,
       comment: 'Semestre creado',
     }));
+  }
+
+  /** Alinea operational_state de materias con el semestre (flujo semester-first). */
+  async syncSubjectsOperationalStateFromSemester(
+    semesterId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    const semesterRepo = manager.getRepository(SemesterEntity);
+    const subjectRepo = manager.getRepository(SubjectEntity);
+    const semester = await semesterRepo.findOne({
+      where: { id: semesterId, deletedAt: IsNull() },
+    });
+    if (!semester?.operationalState) return;
+    await subjectRepo.update(
+      { semester: { id: semesterId }, deletedAt: IsNull() },
+      {
+        operationalState: semester.operationalState,
+        operationalStageEnteredAt: semester.operationalStageEnteredAt,
+        operationalStageDueAt: semester.operationalStageDueAt,
+      },
+    );
   }
 
   async transition(
@@ -461,6 +486,148 @@ export class SemesterOperationalWorkflowService {
         openObservations,
       };
     }));
+  }
+
+  async listProgramsForRole(user: UserEntity): Promise<ProgramOperationalWorkItemDto[]> {
+    const semesters = await this.listWorkForRole(user);
+    return aggregateSemestersToPrograms(semesters);
+  }
+
+  async getProgramOperationsForProject(
+    user: UserEntity,
+    projectId: string,
+  ): Promise<ProgramOperationalWorkItemDto> {
+    const semesters = await this.semesterRepo
+      .createQueryBuilder('sem')
+      .innerJoinAndSelect('sem.project', 'p')
+      .leftJoinAndSelect('sem.subjects', 'subjects', 'subjects.deletedAt IS NULL')
+      .leftJoinAndSelect('p.productOwner', 'productOwner')
+      .leftJoinAndSelect('p.factoryOwner', 'factoryOwner')
+      .where('sem.deletedAt IS NULL')
+      .andWhere('p.deletedAt IS NULL')
+      .andWhere('p.legacyWorkflow = false')
+      .andWhere('p.id = :projectId', { projectId })
+      .orderBy('sem.semesterNumber', 'ASC')
+      .getMany();
+
+    if (!semesters.length) {
+      throw new NotFoundException('Programa no encontrado');
+    }
+
+    this.assertAccess(semesters[0]!, user);
+
+    const items = await Promise.all(
+      semesters.map(async (s) => this.buildSemesterWorkItem(s, user)),
+    );
+    const program = aggregateSemestersToPrograms(items).find((p) => p.projectId === projectId);
+    if (!program) {
+      throw new NotFoundException('Programa no encontrado');
+    }
+    return program;
+  }
+
+  private async buildSemesterWorkItem(
+    s: SemesterEntity,
+    user: UserEntity,
+  ): Promise<SemesterOperationalWorkItemDto> {
+    const openObservations = await this.countOpenObservations(s.id);
+    const ready = await this.countFactoryProductionReadySubjects(s.id);
+    const firstSubject = s.subjects?.[0];
+    const actions =
+      user.role === UserRole.ADMIN
+        ? allowedActionsForRole(responsibleRoleForState(s.operationalState), s.operationalState)
+        : allowedActionsForRole(user.role, s.operationalState);
+    return {
+      kind: 'semester',
+      semesterId: s.id,
+      semesterNumber: s.semesterNumber,
+      subjectId: firstSubject?.id ?? s.id,
+      subjectName: `Semestre ${s.semesterNumber}`,
+      projectId: s.project.id,
+      program: s.project.program,
+      school: s.project.school,
+      operationalState: s.operationalState,
+      currentResponsibleRole: responsibleRoleForState(s.operationalState),
+      stageDueAt: s.operationalStageDueAt,
+      slaStatus: this.slaService.computeSlaStatus({
+        state: s.operationalState,
+        stageEnteredAt: s.operationalStageEnteredAt,
+        stageDueAt: s.operationalStageDueAt,
+        finalizedAt: s.operationalFinalizedAt,
+      }),
+      availableActions: actions,
+      lastReturnReason: s.lastReturnReason,
+      actionUrl: `/projects/${s.project.id}/semesters/${s.id}/operations`,
+      subjectsTotal: s.subjects?.length ?? 0,
+      subjectsReady: ready,
+      openObservations,
+    };
+  }
+
+  async listProgramsTrackingForPlanning(user: UserEntity): Promise<ProgramOperationalWorkItemDto[]> {
+    const semesters = await this.listTrackingForPlanning(user);
+    return aggregateSemestersToPrograms(semesters);
+  }
+
+  async listTrackingForProduct(user: UserEntity): Promise<SemesterOperationalWorkItemDto[]> {
+    if (user.role !== UserRole.PRODUCT && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Solo Product puede consultar seguimiento');
+    }
+    const qb = this.semesterRepo
+      .createQueryBuilder('sem')
+      .innerJoinAndSelect('sem.project', 'p')
+      .leftJoinAndSelect('sem.subjects', 'subjects', 'subjects.deletedAt IS NULL')
+      .where('sem.deletedAt IS NULL')
+      .andWhere('p.deletedAt IS NULL')
+      .andWhere('p.legacyWorkflow = false')
+      .andWhere('sem.operational_state <> :finalized', {
+        finalized: InstitutionalOperationalState.FINALIZED,
+      });
+    if (user.role === UserRole.PRODUCT) {
+      qb.andWhere('p.productOwnerId = :userId', { userId: user.id });
+    }
+    const semesters = await qb
+      .orderBy('sem.operational_stage_due_at', 'ASC', 'NULLS LAST')
+      .addOrderBy('sem.updatedAt', 'DESC')
+      .getMany();
+
+    return Promise.all(
+      semesters.map(async (s) => {
+        const openObservations = await this.countOpenObservations(s.id);
+        const ready = await this.countFactoryProductionReadySubjects(s.id);
+        const firstSubject = s.subjects?.[0];
+        return {
+          kind: 'semester' as const,
+          semesterId: s.id,
+          semesterNumber: s.semesterNumber,
+          subjectId: firstSubject?.id ?? s.id,
+          subjectName: `Semestre ${s.semesterNumber}`,
+          projectId: s.project.id,
+          program: s.project.program,
+          school: s.project.school,
+          operationalState: s.operationalState,
+          currentResponsibleRole: responsibleRoleForState(s.operationalState),
+          stageDueAt: s.operationalStageDueAt,
+          slaStatus: this.slaService.computeSlaStatus({
+            state: s.operationalState,
+            stageEnteredAt: s.operationalStageEnteredAt,
+            stageDueAt: s.operationalStageDueAt,
+            finalizedAt: s.operationalFinalizedAt,
+          }),
+          availableActions: [],
+          lastReturnReason: s.lastReturnReason,
+          actionUrl: `/projects/${s.project.id}/semesters/${s.id}/operations`,
+          subjectsTotal: s.subjects?.length ?? 0,
+          subjectsReady: ready,
+          openObservations,
+        };
+      }),
+    );
+  }
+
+  async listProgramsTrackingForProduct(user: UserEntity): Promise<ProgramOperationalWorkItemDto[]> {
+    const semesters = await this.listTrackingForProduct(user);
+    return aggregateSemestersToPrograms(semesters);
   }
 
   private async loadSemester(semesterId: string): Promise<SemesterEntity> {

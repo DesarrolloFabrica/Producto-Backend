@@ -5,12 +5,13 @@ import { InstitutionalWorkflowModule } from '../institutional-workflow/instituti
 import { OperationalTransitionEntity } from '../institutional-workflow/operational-transition.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
+import { SemesterEntity } from '../semesters/semester.entity';
 import { LmsDashboardController } from './lms-dashboard.controller';
 import { LmsDashboardService } from './lms-dashboard.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([SubjectEntity, ProjectEntity, OperationalTransitionEntity]),
+    TypeOrmModule.forFeature([SubjectEntity, SemesterEntity, ProjectEntity, OperationalTransitionEntity]),
     AuthModule,
     InstitutionalWorkflowModule,
   ],

@@ -12,6 +12,7 @@ import {
   OperationalWorkspaceDto,
 } from './dto/operational-workspace.dto';
 import { InstitutionalWorkflowService } from './institutional-workflow.service';
+import { ProgramOperationalWorkItemDto } from './dto/program-operational-work-item.dto';
 import {
   SemesterOperationalWorkflowService,
   SemesterOperationalWorkspaceDto,
@@ -102,10 +103,43 @@ export class InstitutionalWorkflowController {
     return this.semesterWorkflowService.listTrackingForPlanning(user);
   }
 
+  @Get('planning/work/programs')
+  @Roles(UserRole.PLANEACION, UserRole.ADMIN)
+  async planningWorkPrograms(@CurrentUser() user: UserEntity): Promise<ProgramOperationalWorkItemDto[]> {
+    return this.semesterWorkflowService.listProgramsForRole(user);
+  }
+
+  @Get('planning/tracking/programs')
+  @Roles(UserRole.PLANEACION, UserRole.ADMIN)
+  async planningTrackingPrograms(@CurrentUser() user: UserEntity): Promise<ProgramOperationalWorkItemDto[]> {
+    return this.semesterWorkflowService.listProgramsTrackingForPlanning(user);
+  }
+
+  @Get('projects/:projectId/operational-program')
+  @Roles(
+    UserRole.PRODUCT,
+    UserRole.FABRICA,
+    UserRole.PLANEACION,
+    UserRole.LMS,
+    UserRole.ADMIN,
+  )
+  async projectOperationalProgram(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<ProgramOperationalWorkItemDto> {
+    return this.semesterWorkflowService.getProgramOperationsForProject(user, projectId);
+  }
+
   @Get('lms/work')
   @Roles(UserRole.LMS, UserRole.ADMIN)
   async lmsWork(@CurrentUser() user: UserEntity): Promise<SemesterOperationalWorkItemDto[]> {
     return this.semesterWorkflowService.listWorkForRole(user);
+  }
+
+  @Get('lms/work/programs')
+  @Roles(UserRole.LMS, UserRole.ADMIN)
+  async lmsWorkPrograms(@CurrentUser() user: UserEntity): Promise<ProgramOperationalWorkItemDto[]> {
+    return this.semesterWorkflowService.listProgramsForRole(user);
   }
 
   @Get('product/operational-work')
@@ -116,11 +150,35 @@ export class InstitutionalWorkflowController {
     return this.semesterWorkflowService.listWorkForRole(user);
   }
 
+  @Get('product/operational-work/programs')
+  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  async productOperationalWorkPrograms(
+    @CurrentUser() user: UserEntity,
+  ): Promise<ProgramOperationalWorkItemDto[]> {
+    return this.semesterWorkflowService.listProgramsForRole(user);
+  }
+
+  @Get('product/tracking/programs')
+  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  async productTrackingPrograms(
+    @CurrentUser() user: UserEntity,
+  ): Promise<ProgramOperationalWorkItemDto[]> {
+    return this.semesterWorkflowService.listProgramsTrackingForProduct(user);
+  }
+
   @Get('factory/operational-work')
   @Roles(UserRole.FABRICA, UserRole.ADMIN)
   async factoryOperationalWork(
     @CurrentUser() user: UserEntity,
   ): Promise<SemesterOperationalWorkItemDto[]> {
     return this.semesterWorkflowService.listWorkForRole(user);
+  }
+
+  @Get('factory/operational-work/programs')
+  @Roles(UserRole.FABRICA, UserRole.ADMIN)
+  async factoryOperationalWorkPrograms(
+    @CurrentUser() user: UserEntity,
+  ): Promise<ProgramOperationalWorkItemDto[]> {
+    return this.semesterWorkflowService.listProgramsForRole(user);
   }
 }

@@ -10,7 +10,7 @@ export class NotificationInboxQueryDto {
   @IsInt()
   @Min(1)
   @Max(100)
-  limit?: number = 40;
+  limit?: number = 15;
 
   @ApiPropertyOptional({ default: 0, minimum: 0 })
   @IsOptional()
@@ -20,7 +20,7 @@ export class NotificationInboxQueryDto {
   offset?: number = 0;
 
   @ApiPropertyOptional({
-    default: 7,
+    default: 3,
     description: 'Días de retención para notificaciones ya vistas',
     minimum: 1,
     maximum: 30,

@@ -13,6 +13,7 @@ import { InstitutionalWorkflowSlaService } from '../institutional-workflow/insti
 import { OperationalTransitionEntity } from '../institutional-workflow/operational-transition.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
+import { SemesterEntity } from '../semesters/semester.entity';
 import { UserEntity } from '../users/user.entity';
 import {
   LmsActivityItemDto,
@@ -42,6 +43,8 @@ export class LmsDashboardService {
   constructor(
     @InjectRepository(SubjectEntity)
     private readonly subjectRepo: Repository<SubjectEntity>,
+    @InjectRepository(SemesterEntity)
+    private readonly semesterRepo: Repository<SemesterEntity>,
     @InjectRepository(ProjectEntity)
     private readonly projectRepo: Repository<ProjectEntity>,
     @InjectRepository(OperationalTransitionEntity)
@@ -69,6 +72,20 @@ export class LmsDashboardService {
   }
 
   private async loadKpis(): Promise<LmsDashboardKpisDto> {
+    const programCounts = await this.semesterRepo
+      .createQueryBuilder('sem')
+      .innerJoin('sem.project', 'project')
+      .select('sem.operational_state', 'state')
+      .addSelect('COUNT(DISTINCT project.id)::int', 'count')
+      .where('sem.deletedAt IS NULL')
+      .andWhere('project.deletedAt IS NULL')
+      .andWhere('project.legacyWorkflow = false')
+      .andWhere('sem.operational_state IN (:...states)', { states: LMS_QUEUE_STATES })
+      .groupBy('sem.operational_state')
+      .getRawMany<{ state: InstitutionalOperationalState; count: number }>();
+
+    const countByState = new Map(programCounts.map((r) => [r.state, Number(r.count)]));
+
     const subjectCounts = await this.subjectRepo
       .createQueryBuilder('subject')
       .innerJoin('subject.project', 'project')
@@ -80,10 +97,10 @@ export class LmsDashboardService {
       .groupBy('subject.operational_state')
       .getRawMany<{ state: InstitutionalOperationalState; count: number }>();
 
-    const countByState = new Map(subjectCounts.map((r) => [r.state, Number(r.count)]));
+    const subjectCountByState = new Map(subjectCounts.map((r) => [r.state, Number(r.count)]));
 
     const completedUpload = COMPLETED_UPLOAD_STATES.reduce(
-      (sum, state) => sum + (countByState.get(state) ?? 0),
+      (sum, state) => sum + (subjectCountByState.get(state) ?? 0),
       0,
     );
 

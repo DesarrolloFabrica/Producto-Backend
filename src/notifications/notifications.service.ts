@@ -455,6 +455,31 @@ export class NotificationsService {
 
   }
 
+  /** Marca como leídas las informativas antiguas sin acción pendiente. */
+  private async autoArchiveReadInformative(user: UserEntity): Promise<void> {
+    const cutoff = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    await this.notificationRepo
+      .createQueryBuilder()
+      .update(NotificationEntity)
+      .set({ isRead: true, readAt: now })
+      .where('isRead = false')
+      .andWhere('createdAt < :cutoff', { cutoff })
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where('type = :info', { info: NotificationType.INFO })
+            .orWhere('"eventType"::text IN (:...informativeTypes)', {
+              informativeTypes: INFORMATIVE_EVENT_TYPES.map(String),
+            })
+            .orWhere('title IN (:...legacyTitles)', {
+              legacyTitles: LEGACY_INFORMATIVE_TITLES,
+            });
+        }),
+      )
+      .andWhere(this.recipientUpdateFilter(user))
+      .execute();
+  }
+
 
 
   async notifyUser(
@@ -613,13 +638,15 @@ export class NotificationsService {
 
     await this.autoArchiveStale(user);
 
+    await this.autoArchiveReadInformative(user);
 
 
-    const limit = query.limit ?? 40;
+
+    const limit = query.limit ?? 15;
 
     const offset = query.offset ?? 0;
 
-    const readDays = query.readDays ?? 7;
+    const readDays = query.readDays ?? 3;
 
     const readCutoff = new Date(Date.now() - readDays * 24 * 60 * 60 * 1000);
 
@@ -721,7 +748,7 @@ export class NotificationsService {
 
 
 
-    const readDays = 7;
+    const readDays = 3;
 
     const readCutoff = new Date(Date.now() - readDays * 24 * 60 * 60 * 1000);
 

@@ -286,3 +286,24 @@ function allActionsForState(state: InstitutionalOperationalState): Institutional
   }
   return [...set];
 }
+
+/** Acciones permitidas en el centro operacional de asignatura (fase 7 Product). */
+export const SUBJECT_LEVEL_OPERATIONAL_ACTIONS = new Set<InstitutionalOperationalAction>([
+  InstitutionalOperationalAction.PRODUCT_REQUEST_CHANGES,
+  InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC,
+]);
+
+export function isSemesterScopedOperationalAction(action: InstitutionalOperationalAction): boolean {
+  if (action === InstitutionalOperationalAction.INSTITUTIONAL_SUBJECT_CREATED) {
+    return false;
+  }
+  return !SUBJECT_LEVEL_OPERATIONAL_ACTIONS.has(action);
+}
+
+export function filterSubjectAvailableActions(
+  actions: InstitutionalOperationalAction[],
+  institutionalFlow: boolean,
+): InstitutionalOperationalAction[] {
+  if (!institutionalFlow) return actions;
+  return actions.filter((action) => SUBJECT_LEVEL_OPERATIONAL_ACTIONS.has(action));
+}

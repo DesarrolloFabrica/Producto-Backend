@@ -18,6 +18,7 @@ import {
   FactoryDashboardSummaryDto,
   FactorySubjectsQueryDto,
 } from './dto/factory-dashboard-summary.dto';
+import { FactoryProgramsPageDto } from './dto/factory-program-work-item.dto';
 import { FactorySubjectsPageDto } from './dto/factory-subject-work-item.dto';
 import { FactoryDashboardService } from './factory-dashboard.service';
 
@@ -48,6 +49,18 @@ export class FactoryDashboardController {
     @Query() query: FactorySubjectsQueryDto,
   ): Promise<FactorySubjectsPageDto> {
     return this.factoryDashboardService.listSubjects(user, query);
+  }
+
+  @Get('subjects/programs')
+  @ApiOperation({ summary: 'Listado paginado de programas agregados para Fábrica' })
+  @ApiOkResponse({ type: FactoryProgramsPageDto })
+  @ApiUnauthorizedResponse()
+  @ApiForbiddenResponse()
+  async listPrograms(
+    @CurrentUser() user: UserEntity,
+    @Query() query: FactorySubjectsQueryDto,
+  ): Promise<FactoryProgramsPageDto> {
+    return this.factoryDashboardService.listPrograms(user, query);
   }
 
   @Get('subjects/:id/detail')

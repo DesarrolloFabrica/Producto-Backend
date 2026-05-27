@@ -19,9 +19,13 @@ import {
   FactorySubjectsQueryDto,
 } from './dto/factory-dashboard-summary.dto';
 import {
+  FactoryProgramsPageDto,
+} from './dto/factory-program-work-item.dto';
+import {
   FactorySubjectWorkItemDto,
   FactorySubjectsPageDto,
 } from './dto/factory-subject-work-item.dto';
+import { aggregateFactoryItemsToPrograms } from './factory-program-aggregator';
 
 /** Semestres donde Fábrica tiene trabajo activo (bandeja operacional). */
 const FACTORY_ACTIVE_SEMESTER_STATES = statesPendingForRole(UserRole.FABRICA);
@@ -363,6 +367,57 @@ export class FactoryDashboardService {
     const total = items.length;
     const start = (page - 1) * limit;
     return { items: items.slice(start, start + limit), total, page, limit };
+  }
+
+  async listPrograms(
+    user: UserEntity,
+    query: FactorySubjectsQueryDto,
+  ): Promise<FactoryProgramsPageDto> {
+    this.assertFactoryAccess(user);
+    let semesterItems = await this.buildAllWorkItems(user);
+
+    if (query.origin === 'new') semesterItems = semesterItems.filter((i) => i.createdFromChange);
+    else if (query.origin === 'original') semesterItems = semesterItems.filter((i) => !i.createdFromChange);
+    if (query.status) semesterItems = semesterItems.filter((i) => i.operationalState === query.status);
+    if (query.projectId) semesterItems = semesterItems.filter((i) => i.projectId === query.projectId);
+    if (query.program) {
+      const program = query.program.toLowerCase();
+      semesterItems = semesterItems.filter((i) => i.program.toLowerCase().includes(program));
+    }
+    if (query.semester !== undefined) {
+      semesterItems = semesterItems.filter((i) => i.semesterNumber === Number(query.semester));
+    }
+    if (query.priority) semesterItems = semesterItems.filter((i) => i.priority === query.priority);
+    if (query.search) {
+      const q = query.search.toLowerCase();
+      semesterItems = semesterItems.filter(
+        (i) =>
+          i.subjectName.toLowerCase().includes(q) ||
+          i.program.toLowerCase().includes(q) ||
+          i.school.toLowerCase().includes(q),
+      );
+    }
+
+    let programs = aggregateFactoryItemsToPrograms(semesterItems);
+
+    if (query.dueFrom) {
+      const from = new Date(query.dueFrom).getTime();
+      programs = programs.filter(
+        (p) => p.nearestDueDate && new Date(p.nearestDueDate).getTime() >= from,
+      );
+    }
+    if (query.dueTo) {
+      const to = new Date(query.dueTo).getTime();
+      programs = programs.filter(
+        (p) => p.nearestDueDate && new Date(p.nearestDueDate).getTime() <= to,
+      );
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const total = programs.length;
+    const start = (page - 1) * limit;
+    return { items: programs.slice(start, start + limit), total, page, limit };
   }
 
   async getSubjectDetail(subjectId: string, user: UserEntity) {

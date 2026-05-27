@@ -6,6 +6,7 @@ import { OperationalTransitionEntity } from '../institutional-workflow/operation
 import { ProjectOperationalTransitionEntity } from '../project-radication/project-operational-transition.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
+import { SemesterEntity } from '../semesters/semester.entity';
 import { PlanningDashboardController } from './planning-dashboard.controller';
 import { PlanningDashboardService } from './planning-dashboard.service';
 
@@ -13,6 +14,7 @@ import { PlanningDashboardService } from './planning-dashboard.service';
   imports: [
     TypeOrmModule.forFeature([
       SubjectEntity,
+      SemesterEntity,
       ProjectEntity,
       OperationalTransitionEntity,
       ProjectOperationalTransitionEntity,

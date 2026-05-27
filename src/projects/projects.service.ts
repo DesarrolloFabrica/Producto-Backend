@@ -65,6 +65,7 @@ import { ObservationEntity } from '../observations/observation.entity';
 import { loadProductObservationCountsBySubject } from '../observations/observation-subject-query.util';
 import { deriveSubjectOperationalState } from '../factory/utils/operational-state.util';
 import { InstitutionalWorkflowService } from '../institutional-workflow/institutional-workflow.service';
+import { SemesterOperationalWorkflowService } from '../institutional-workflow/semester-operational-workflow.service';
 import { isInstitutionalWorkflowEnabled } from '../institutional-workflow/institutional-workflow.config';
 import { statesPendingForRole } from '../institutional-workflow/institutional-workflow.transitions';
 
@@ -174,6 +175,7 @@ export class ProjectsService {
     private readonly projectWorkflowService: ProjectWorkflowService,
     private readonly mailService: MailService,
     private readonly institutionalWorkflowService: InstitutionalWorkflowService,
+    private readonly semesterOperationalWorkflowService: SemesterOperationalWorkflowService,
   ) {}
 
   assertCanCreateProject(user: UserEntity): void {
@@ -400,7 +402,11 @@ export class ProjectsService {
     return result;
   }
 
-  async findOne(id: string, user: UserEntity): Promise<ProjectDetailDto> {
+  async findOne(
+    id: string,
+    user: UserEntity,
+    options?: { includeTimeline?: boolean },
+  ): Promise<ProjectDetailDto> {
     const projectRows = await this.dataSource.query<ProjectBaseRow[]>(
       `
         SELECT
@@ -568,7 +574,10 @@ export class ProjectsService {
       subjectIds,
     );
 
-    const timeline = await this.auditService.getProjectChangeTimeline(project.id);
+    const timeline =
+      options?.includeTimeline === false
+        ? []
+        : await this.auditService.getProjectChangeTimeline(project.id);
 
     return this.buildProjectDetailFromRows({
       project,
@@ -651,6 +660,14 @@ export class ProjectsService {
         );
       }
 
+      const checklistBatch: Array<{
+        subjectId: string;
+        topicId: string | null;
+        label: string;
+        status: ChecklistStatus;
+        ownerRole: UserRole;
+      }> = [];
+
       for (const semesterDto of dto.semesters) {
         const semester = await semesterRepository.save(
           semesterRepository.create({
@@ -662,27 +679,25 @@ export class ProjectsService {
         );
 
         for (const subjectDto of semesterDto.subjects) {
-            const subject = await subjectRepository.save(
-              subjectRepository.create({
-                project: { id: project.id },
-                semester: { id: semester.id },
-                name: subjectDto.name,
-                expectedDeliveryDate: activation.expectedDeliveryDate,
-                progress: 0,
-                createdFromChange: false,
-              }),
-            );
+          const subject = await subjectRepository.save(
+            subjectRepository.create({
+              project: { id: project.id },
+              semester: { id: semester.id },
+              name: subjectDto.name,
+              expectedDeliveryDate: activation.expectedDeliveryDate,
+              progress: 0,
+              createdFromChange: false,
+            }),
+          );
 
           for (const label of SUBJECT_CHECKLIST_LABELS) {
-            await checklistRepository.save(
-              checklistRepository.create({
-                subject: { id: subject.id },
-                topic: null,
-                label,
-                status: ChecklistStatus.PENDIENTE,
-                ownerRole: UserRole.PRODUCT,
-              }),
-            );
+            checklistBatch.push({
+              subjectId: subject.id,
+              topicId: null,
+              label,
+              status: ChecklistStatus.PENDIENTE,
+              ownerRole: UserRole.PRODUCT,
+            });
           }
 
           const topicNames = (subjectDto.topics ?? []).map((t) => t.trim()).filter(Boolean);
@@ -697,22 +712,31 @@ export class ProjectsService {
             );
 
             for (const label of TOPIC_CHECKLIST_LABELS) {
-              await checklistRepository.save(
-                checklistRepository.create({
-                  subject: { id: subject.id },
-                  topic: { id: topic.id },
-                  label,
-                  status: ChecklistStatus.PENDIENTE,
-                  ownerRole: UserRole.FABRICA,
-                }),
-              );
+              checklistBatch.push({
+                subjectId: subject.id,
+                topicId: topic.id,
+                label,
+                status: ChecklistStatus.PENDIENTE,
+                ownerRole: UserRole.FABRICA,
+              });
             }
           }
+        }
 
-          await this.institutionalWorkflowService.initializeSubjectOperational(
-            subject.id,
+        if (checklistBatch.length > 0) {
+          await this.bulkInsertChecklistItems(checklistRepository, checklistBatch);
+          checklistBatch.length = 0;
+        }
+
+        if (isInstitutionalWorkflowEnabled()) {
+          await this.semesterOperationalWorkflowService.initializeSemesterOperational(
+            semester.id,
             manager,
             user,
+          );
+          await this.semesterOperationalWorkflowService.syncSubjectsOperationalStateFromSemester(
+            semester.id,
+            manager,
           );
         }
       }
@@ -743,27 +767,42 @@ export class ProjectsService {
       return project.id;
     });
 
-    const detail = await this.findOne(projectId, user);
+    const detail = await this.findOne(projectId, user, { includeTimeline: false });
     if (activation.shouldNotifyFactory) {
       void this.mailService.sendProductRequestCreatedEmail(detail);
     }
     if (isInstitutionalWorkflowEnabled()) {
-      await this.dataSource.transaction(async (manager) => {
-        for (const role of [UserRole.PLANEACION, UserRole.FABRICA, UserRole.LMS] as const) {
-          await this.notificationsService.notifyRole(
-            role,
-            {
-              type: NotificationType.INFO,
-              title: 'Nueva solicitud',
-              message: `Nueva solicitud: ${detail.program} — ${detail.school}`,
-              projectId: detail.id,
-              eventType: NotificationEventType.INSTITUTIONAL_REQUEST_CREATED,
-              actionUrl: `/projects/${detail.id}`,
-            },
-            manager,
-          );
-        }
-      });
+      const institutionalNotifyRoles = [
+        UserRole.PLANEACION,
+        UserRole.FABRICA,
+        UserRole.LMS,
+      ] as const;
+      const roleActionUrls: Record<(typeof institutionalNotifyRoles)[number], string> = {
+        [UserRole.PLANEACION]: '/planning/dashboard?filter=initial',
+        [UserRole.FABRICA]: '/factory/dashboard',
+        [UserRole.LMS]: '/lms/dashboard',
+      };
+      void this.dataSource
+        .transaction(async (manager) => {
+          for (const notifyRole of institutionalNotifyRoles) {
+            await this.notificationsService.notifyRole(
+              notifyRole,
+              {
+                type:
+                  notifyRole === UserRole.PLANEACION
+                    ? NotificationType.ACTION
+                    : NotificationType.INFO,
+                title: 'Nueva solicitud',
+                message: `${detail.program} · ${detail.school}`,
+                projectId: detail.id,
+                eventType: NotificationEventType.INSTITUTIONAL_REQUEST_CREATED,
+                actionUrl: roleActionUrls[notifyRole],
+              },
+              manager,
+            );
+          }
+        })
+        .catch(() => undefined);
     }
     return detail;
   }
@@ -1718,5 +1757,31 @@ export class ProjectsService {
         projectProgress: project.progress,
       };
     });
+  }
+
+  /**
+   * TypeORM `insert()` no mapea FKs de relaciones (@JoinColumn); usar save o QueryBuilder.
+   */
+  private async bulkInsertChecklistItems(
+    checklistRepository: Repository<ChecklistItemEntity>,
+    rows: Array<{
+      subjectId: string;
+      topicId: string | null;
+      label: string;
+      status: ChecklistStatus;
+      ownerRole: UserRole;
+    }>,
+  ): Promise<void> {
+    if (!rows.length) return;
+    const entities = rows.map((row) =>
+      checklistRepository.create({
+        subject: { id: row.subjectId },
+        topic: row.topicId ? { id: row.topicId } : null,
+        label: row.label,
+        status: row.status,
+        ownerRole: row.ownerRole,
+      }),
+    );
+    await checklistRepository.save(entities, { chunk: 50 });
   }
 }
