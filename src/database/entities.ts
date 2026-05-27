@@ -5,6 +5,8 @@ import { NotificationEntity } from '../notifications/notification.entity';
 import { ObservationMessageEntity } from '../observations/observation-message.entity';
 import { ObservationBatchEntity } from '../observations/observation-batch.entity';
 import { ObservationEntity } from '../observations/observation.entity';
+import { SemesterOperationalCheckEntity } from '../institutional-workflow/semester-operational-check.entity';
+import { SemesterOperationalTransitionEntity } from '../institutional-workflow/semester-operational-transition.entity';
 import { LinkResourceEntity } from '../projects/link-resource.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { SemesterEntity } from '../semesters/semester.entity';
@@ -26,4 +28,6 @@ export const ALL_ENTITIES = [
   AuditLogEntity,
   StatusHistoryEntity,
   NotificationEntity,
+  SemesterOperationalCheckEntity,
+  SemesterOperationalTransitionEntity,
 ];

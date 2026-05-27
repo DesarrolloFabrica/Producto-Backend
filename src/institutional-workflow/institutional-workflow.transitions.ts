@@ -117,7 +117,7 @@ export function responsibleRoleForState(
     case InstitutionalOperationalState.PENDING_PLANNING_PRODUCTION_VALIDATION:
     case InstitutionalOperationalState.PENDING_PLANNING_LMS_VALIDATION:
     case InstitutionalOperationalState.PENDING_PROJECT_RADICATION:
-      return UserRole.PRODUCT;
+      return UserRole.PLANEACION;
     case InstitutionalOperationalState.FINALIZED:
       return UserRole.PLANEACION;
     case InstitutionalOperationalState.RETURNED_TO_PRODUCT_FROM_PLANNING:
@@ -153,6 +153,17 @@ export function isAcademicReviewReady(state: InstitutionalOperationalState): boo
 
 export function isCorrectionInFactory(state: InstitutionalOperationalState): boolean {
   return state === InstitutionalOperationalState.CHANGES_REQUESTED_BY_PRODUCT;
+}
+
+/** Fase 7 del pipeline: revisión académica Product (temas, checklist, granularidad). */
+export function isSemesterProductAcademicReviewPhase(
+  state: InstitutionalOperationalState,
+): boolean {
+  return (
+    state === InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW ||
+    state === InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW ||
+    state === InstitutionalOperationalState.CHANGES_REQUESTED_BY_PRODUCT
+  );
 }
 
 export function statesPendingForRole(role: UserRole): InstitutionalOperationalState[] {

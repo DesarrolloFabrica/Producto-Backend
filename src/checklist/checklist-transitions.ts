@@ -16,8 +16,22 @@ const PRODUCT_SUBJECT_ALLOWED: Partial<Record<ChecklistStatus, ChecklistStatus[]
   [ChecklistStatus.RECHAZADO]: [ChecklistStatus.APROBADO, ChecklistStatus.PENDIENTE],
 };
 
-/** Checklist por tema — ownerRole FABRICA, revisado por Product tras ENTREGADO. */
+/**
+ * Checklist por tema/gránulo — ownerRole FABRICA.
+ * En revisión académica Product los materiales ya fueron producidos por Fábrica;
+ * los ítems pueden quedar en PENDIENTE al crear los gránulos y Product los aprueba directamente.
+ */
 const PRODUCT_FACTORY_ALLOWED: Partial<Record<ChecklistStatus, ChecklistStatus[]>> = {
+  [ChecklistStatus.PENDIENTE]: [
+    ChecklistStatus.APROBADO,
+    ChecklistStatus.RECHAZADO,
+    ChecklistStatus.ENTREGADO,
+  ],
+  [ChecklistStatus.EN_PRODUCCION]: [
+    ChecklistStatus.APROBADO,
+    ChecklistStatus.RECHAZADO,
+    ChecklistStatus.ENTREGADO,
+  ],
   [ChecklistStatus.ENTREGADO]: [ChecklistStatus.APROBADO, ChecklistStatus.RECHAZADO],
   [ChecklistStatus.APROBADO]: [ChecklistStatus.RECHAZADO, ChecklistStatus.ENTREGADO],
   [ChecklistStatus.RECHAZADO]: [ChecklistStatus.APROBADO, ChecklistStatus.ENTREGADO],
@@ -77,6 +91,14 @@ export function isEligibleForProductBulkApprove(item: ChecklistItemEntity): bool
   if (item.ownerRole === UserRole.PRODUCT) {
     return (
       item.status === ChecklistStatus.PENDIENTE || item.status === ChecklistStatus.RECHAZADO
+    );
+  }
+  if (item.topic?.id) {
+    return (
+      item.status === ChecklistStatus.PENDIENTE ||
+      item.status === ChecklistStatus.EN_PRODUCCION ||
+      item.status === ChecklistStatus.ENTREGADO ||
+      item.status === ChecklistStatus.RECHAZADO
     );
   }
   return (

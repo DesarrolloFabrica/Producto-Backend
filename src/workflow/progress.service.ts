@@ -122,7 +122,7 @@ export class ProgressService {
   async recalculateTreeFromSubject(
     subjectId: string,
     manager?: EntityManager,
-  ): Promise<{ subjectProgress: number; projectId: string }> {
+  ): Promise<{ subjectProgress: number; projectProgress: number; projectId: string }> {
     const subjectRepo = manager ? manager.getRepository(SubjectEntity) : this.subjectRepo;
     const subject = await subjectRepo.findOne({
       where: { id: subjectId },
@@ -135,8 +135,8 @@ export class ProgressService {
     }
 
     const subjectProgress = await this.calculateSubjectProgress(subjectId, manager);
-    await this.calculateProjectProgress(subject.project.id, manager);
+    const projectProgress = await this.calculateProjectProgress(subject.project.id, manager);
 
-    return { subjectProgress, projectId: subject.project.id };
+    return { subjectProgress, projectProgress, projectId: subject.project.id };
   }
 }

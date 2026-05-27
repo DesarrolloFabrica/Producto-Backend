@@ -80,24 +80,41 @@ export class ObservationsService {
     subjectId: string,
     manager?: EntityManager,
   ): Promise<boolean> {
-    return await this.hasObservationsForSubjectByStatuses(subjectId, BLOCKING_STATUSES, manager);
+    const count = await this.countObservationsForSubjectByStatuses(
+      subjectId,
+      BLOCKING_STATUSES,
+      manager,
+    );
+    return count > 0;
   }
 
   async hasUnresolvedObservationsForSubject(
     subjectId: string,
     manager?: EntityManager,
   ): Promise<boolean> {
-    return await this.hasObservationsForSubjectByStatuses(subjectId, UNRESOLVED_STATUSES, manager);
+    const count = await this.countObservationsForSubjectByStatuses(
+      subjectId,
+      UNRESOLVED_STATUSES,
+      manager,
+    );
+    return count > 0;
   }
 
-  private async hasObservationsForSubjectByStatuses(
+  async countUnresolvedObservationsForSubject(
+    subjectId: string,
+    manager?: EntityManager,
+  ): Promise<number> {
+    return this.countObservationsForSubjectByStatuses(subjectId, UNRESOLVED_STATUSES, manager);
+  }
+
+  private async countObservationsForSubjectByStatuses(
     subjectId: string,
     statuses: ObservationStatus[],
     manager?: EntityManager,
-  ): Promise<boolean> {
+  ): Promise<number> {
     const repo = manager ? manager.getRepository(ObservationEntity) : this.observationRepo;
 
-    const count = await repo
+    return repo
       .createQueryBuilder('o')
       .where('o.status IN (:...statuses)', { statuses })
       .andWhere(
@@ -127,8 +144,6 @@ export class ObservationsService {
         }),
       )
       .getCount();
-
-    return count > 0;
   }
 
   async hasBlockingObservationsForProject(

@@ -6,6 +6,9 @@ export class FactorySubjectWorkItemDto {
   @ApiProperty({ format: 'uuid' })
   subjectId!: string;
 
+  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  semesterId?: string | null;
+
   @ApiProperty()
   subjectName!: string;
 
@@ -42,8 +45,14 @@ export class FactorySubjectWorkItemDto {
   @ApiProperty()
   actionUrl!: string;
 
-  @ApiProperty({ description: 'True si la materia fue agregada después de la solicitud inicial' })
+  @ApiProperty({ description: 'True si el semestre fue agregado despues de la solicitud inicial' })
   createdFromChange!: boolean;
+
+  @ApiPropertyOptional()
+  subjectsTotal?: number;
+
+  @ApiPropertyOptional()
+  subjectsReady?: number;
 }
 
 export class FactorySubjectsPageDto {

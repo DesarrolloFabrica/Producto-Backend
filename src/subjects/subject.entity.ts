@@ -10,6 +10,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { FactoryProductionStatus } from '../common/enums/factory-production-status.enum';
 import { InstitutionalOperationalState } from '../common/enums/institutional-operational-state.enum';
 import { SubjectStatus } from '../common/enums/subject-status.enum';
 import { UserEntity } from '../users/user.entity';
@@ -84,6 +85,19 @@ export class SubjectEntity {
 
   @Column({ type: 'int', default: 0 })
   progress!: number;
+
+  @Index()
+  @Column({
+    type: 'enum',
+    enum: FactoryProductionStatus,
+    enumName: 'factory_production_status',
+    name: 'factory_production_status',
+    default: FactoryProductionStatus.NOT_STARTED,
+  })
+  factoryProductionStatus!: FactoryProductionStatus;
+
+  @Column({ type: 'timestamptz', name: 'factory_production_completed_at', nullable: true })
+  factoryProductionCompletedAt!: Date | null;
 
   @Column({ type: 'text', nullable: true })
   generalObservations!: string | null;

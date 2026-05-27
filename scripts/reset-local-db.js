@@ -6,8 +6,15 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 async function main() {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) throw new Error('DATABASE_URL no definida');
-  if (!/(localhost|127\.0\.0\.1)/i.test(dbUrl)) {
-    throw new Error('ABORTADO: DATABASE_URL no apunta a localhost');
+  const isLocal = /(localhost|127\.0\.0\.1)/i.test(dbUrl);
+  const forceRemote = process.env.RESET_DB_FORCE === 'true';
+  if (!isLocal && !forceRemote) {
+    throw new Error(
+      'ABORTADO: DATABASE_URL no apunta a localhost. Use RESET_DB_FORCE=true solo en entornos de desarrollo.',
+    );
+  }
+  if (!isLocal && forceRemote) {
+    console.warn('\n⚠️  RESET_DB_FORCE=true: limpiando base remota de desarrollo\n');
   }
   if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
     throw new Error('ABORTADO: NODE_ENV=production');

@@ -15,4 +15,10 @@ export class BulkApproveSectionResponseDto {
 
   @ApiProperty({ type: [String] })
   updatedItemIds!: string[];
+
+  @ApiProperty({ required: false })
+  subjectProgress?: number;
+
+  @ApiProperty({ required: false })
+  projectProgress?: number;
 }

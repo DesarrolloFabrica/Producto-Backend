@@ -148,7 +148,7 @@ export class PlanningDashboardService {
       .innerJoinAndSelect('t.actor', 'actor')
       .where('t.actorRole = :role', { role: UserRole.PLANEACION })
       .orderBy('t.createdAt', 'DESC')
-      .take(20)
+      .take(8)
       .getMany();
 
     const projectRows = await this.projectTransitionRepo
@@ -157,7 +157,7 @@ export class PlanningDashboardService {
       .innerJoinAndSelect('t.actor', 'actor')
       .where('t.actorRole = :role', { role: UserRole.PLANEACION })
       .orderBy('t.createdAt', 'DESC')
-      .take(20)
+      .take(8)
       .getMany();
 
     const merged: ActivityRow[] = [
@@ -194,7 +194,7 @@ export class PlanningDashboardService {
     ];
 
     merged.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    return merged.slice(0, 20);
+    return merged.slice(0, 8);
   }
 
   private async loadReturnedPreview(): Promise<PlanningSubjectPreviewDto[]> {

@@ -100,6 +100,22 @@ export class InstitutionalWorkflowService {
     }
   }
 
+  private isSemesterScopedSubjectAction(action: InstitutionalOperationalAction): boolean {
+    return (
+      action === InstitutionalOperationalAction.FACTORY_START_PRODUCTION ||
+      action === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT ||
+      action === InstitutionalOperationalAction.PRODUCT_START_ACADEMIC_REVIEW
+    );
+  }
+
+  private assertNoSubjectSemesterScopedTransition(subject: SubjectEntity, action: InstitutionalOperationalAction): void {
+    if (this.usesInstitutionalWorkflow(subject.project) && this.isSemesterScopedSubjectAction(action)) {
+      throw new BadRequestException(
+        `Esta accion se gestiona por semestre. Use /projects/${subject.project.id}/semesters/${subject.semester.id}/operations`,
+      );
+    }
+  }
+
   async initializeSubjectOperational(
     subjectId: string,
     manager: EntityManager,
@@ -163,6 +179,7 @@ export class InstitutionalWorkflowService {
     }
 
     this.assertTransitionOwnership(subject, user);
+    this.assertNoSubjectSemesterScopedTransition(subject, dto.action);
 
     if (user.role !== UserRole.ADMIN) {
       const allowed = allowedActionsForRole(user.role, subject.operationalState);
@@ -197,6 +214,7 @@ export class InstitutionalWorkflowService {
       relations: { project: { productOwner: true, factoryOwner: true }, semester: true },
     });
     if (!fresh) throw new NotFoundException('Asignatura no encontrada');
+    this.assertNoSubjectSemesterScopedTransition(fresh, dto.action);
 
     if (dto.action === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) {
       await this.subjectsService.assertReadyForAcademicApproval(subjectId, user, manager);
@@ -326,7 +344,9 @@ export class InstitutionalWorkflowService {
     const correctionInFactory = isCorrectionInFactory(subject.operationalState);
 
     let academicApprovalBlockers: string[] = [];
-    let filteredActions = uniqueActions;
+    let filteredActions = this.usesInstitutionalWorkflow(subject.project)
+      ? uniqueActions.filter((action) => !this.isSemesterScopedSubjectAction(action))
+      : uniqueActions;
     if (
       uniqueActions.includes(InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) ||
       subject.operationalState === InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW
@@ -346,6 +366,8 @@ export class InstitutionalWorkflowService {
       subjectId: subject.id,
       subjectName: subject.name,
       projectId: subject.project.id,
+      semesterId: subject.semester.id,
+      semesterNumber: subject.semester.semesterNumber,
       program: subject.project.program,
       school: subject.project.school,
       operationalState: subject.operationalState,
