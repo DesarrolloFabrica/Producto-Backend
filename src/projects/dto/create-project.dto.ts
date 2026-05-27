@@ -48,13 +48,20 @@ export class CreateProjectSubjectDto {
   @IsNotEmpty()
   name!: string;
 
-  @ApiProperty({ type: [String], example: ['Tema 1', 'Tema 2', 'Tema 3', 'Tema 4', 'Tema 5'], minItems: 4, maxItems: 6 })
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Temas/gránulos opcionales en creación inicial; se definen en revisión académica Product si se omiten.',
+    default: [],
+  })
+  @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @ValidateIf((o: CreateProjectSubjectDto) => (o.topics?.length ?? 0) > 0)
   @IsNotEmpty({ each: true })
   @ArrayMinSize(4, { message: SUBJECT_TOPICS_RANGE_MESSAGE })
   @ArrayMaxSize(6, { message: SUBJECT_TOPICS_RANGE_MESSAGE })
-  topics!: string[];
+  topics?: string[];
 }
 
 export class CreateProjectSemesterDto {

@@ -26,6 +26,7 @@ import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ProjectEntity } from '../projects/project.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
+import { SubjectsService } from '../subjects/subjects.service';
 import { UserEntity } from '../users/user.entity';
 import { OperationalTransitionDto } from './dto/operational-transition.dto';
 import {
@@ -66,6 +67,8 @@ export class InstitutionalWorkflowService {
     private readonly auditService: AuditService,
     @Inject(forwardRef(() => ProjectInstitutionalWorkflowService))
     private readonly projectRadicationWorkflow: ProjectInstitutionalWorkflowService,
+    @Inject(forwardRef(() => SubjectsService))
+    private readonly subjectsService: SubjectsService,
   ) {}
 
   usesInstitutionalWorkflow(project: Pick<ProjectEntity, 'legacyWorkflow'>): boolean {
@@ -195,6 +198,10 @@ export class InstitutionalWorkflowService {
     });
     if (!fresh) throw new NotFoundException('Asignatura no encontrada');
 
+    if (dto.action === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) {
+      await this.subjectsService.assertReadyForAcademicApproval(subjectId, user, manager);
+    }
+
     const fromState = fresh.operationalState;
     const next = resolveNextInstitutionalState({
       current: fromState,
@@ -318,6 +325,23 @@ export class InstitutionalWorkflowService {
     const academicReviewReady = isAcademicReviewReady(subject.operationalState);
     const correctionInFactory = isCorrectionInFactory(subject.operationalState);
 
+    let academicApprovalBlockers: string[] = [];
+    let filteredActions = uniqueActions;
+    if (
+      uniqueActions.includes(InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) ||
+      subject.operationalState === InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW
+    ) {
+      academicApprovalBlockers = await this.subjectsService.getAcademicApprovalBlockers(
+        subjectId,
+        user,
+      );
+      if (academicApprovalBlockers.length > 0) {
+        filteredActions = filteredActions.filter(
+          (action) => action !== InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC,
+        );
+      }
+    }
+
     return {
       subjectId: subject.id,
       subjectName: subject.name,
@@ -341,7 +365,9 @@ export class InstitutionalWorkflowService {
       lastReturnAt: subject.lastReturnAt,
       checks: checks.map((c) => this.mapCheck(c)),
       timeline: timeline.map((t) => this.mapTransition(t)),
-      availableActions: uniqueActions,
+      availableActions: filteredActions,
+      academicApprovalReady: academicApprovalBlockers.length === 0,
+      academicApprovalBlockers,
     };
   }
 

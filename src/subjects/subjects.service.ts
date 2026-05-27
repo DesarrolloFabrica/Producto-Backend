@@ -23,6 +23,7 @@ import { ProjectEntity } from '../projects/project.entity';
 import { ProjectsService } from '../projects/projects.service';
 import { MailService } from '../mail/mail.service';
 import { Priority } from '../common/enums/priority.enum';
+import { ObservationNotificationStatus } from '../common/enums/observation-notification-status.enum';
 import { ObservationStatus } from '../common/enums/observation-status.enum';
 import { RelatedEntityType } from '../common/enums/related-entity-type.enum';
 import { SemesterEntity } from '../semesters/semester.entity';
@@ -56,6 +57,7 @@ import {
 import { deriveSubjectOperationalState } from '../factory/utils/operational-state.util';
 import { InstitutionalWorkflowService } from '../institutional-workflow/institutional-workflow.service';
 import { isInstitutionalWorkflowEnabled } from '../institutional-workflow/institutional-workflow.config';
+import { isAcademicChecklistEditable } from '../institutional-workflow/institutional-workflow.transitions';
 import { InstitutionalOperationalAction } from '../common/enums/institutional-operational-action.enum';
 import { OperationalTransitionDto } from '../institutional-workflow/dto/operational-transition.dto';
 
@@ -183,7 +185,7 @@ export class SubjectsService {
       throw new ForbiddenException();
     }
 
-    const { subject, items } = await this.loadSubjectContext(subjectId, user, this.dataSource.manager);
+    const { subject } = await this.loadSubjectContext(subjectId, user, this.dataSource.manager);
     this.projectsService.assertCanManageAsProductOwner(subject.project, user);
 
     if (
@@ -193,8 +195,7 @@ export class SubjectsService {
       throw new BadRequestException('La asignatura ya está aprobada.');
     }
 
-    this.validateChecklistForApprove(items);
-    await this.assertNoUnresolvedObservations(subjectId, this.dataSource.manager);
+    await this.assertReadyForAcademicApproval(subjectId, user, this.dataSource.manager);
 
     if (this.institutionalWorkflowService.usesInstitutionalWorkflow(subject.project)) {
       this.institutionalWorkflowService.assertAcademicPhaseAllowed(subject, subject.project);
@@ -866,7 +867,10 @@ export class SubjectsService {
     const observations = await this.observationsService.findBySubjectForProject(subjectId, meta.projectId);
 
     const openObservationsCount = observations.filter(
-      (observation) => observation.role === UserRole.PRODUCT && observation.status === ObservationStatus.ABIERTA,
+      (observation) =>
+        observation.role === UserRole.PRODUCT &&
+        observation.status === ObservationStatus.ABIERTA &&
+        observation.notificationStatus === ObservationNotificationStatus.SENT,
     ).length;
     const correctionSentCount = observations.filter(
       (observation) => observation.role === UserRole.PRODUCT && observation.status === ObservationStatus.EN_CORRECCION,
@@ -1104,17 +1108,153 @@ export class SubjectsService {
   }
 
   async addTopicsToSubject(
-    _subjectId: string,
-    _dto: AddTopicsDto,
+    subjectId: string,
+    dto: AddTopicsDto,
     user: UserEntity,
-  ): Promise<ProjectDetailDto> {
+  ): Promise<SubjectWorkspaceDto> {
     if (user.role !== UserRole.PRODUCT && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Only PRODUCT or ADMIN can modify subjects');
     }
 
-    throw new BadRequestException(
-      'Los temas solo se pueden definir al crear una nueva asignatura.',
-    );
+    const topicNames = dto.topics.map((topic) => topic.trim()).filter(Boolean);
+    assertSubjectTopicsCount(topicNames.length);
+
+    await this.dataSource.transaction(async (manager) => {
+      const subjectRepo = manager.getRepository(SubjectEntity);
+      const topicRepo = manager.getRepository(TopicEntity);
+      const checklistRepo = manager.getRepository(ChecklistItemEntity);
+
+      const subject = await subjectRepo.findOne({
+        where: { id: subjectId, deletedAt: IsNull() },
+        relations: { project: { productOwner: true, factoryOwner: true } },
+      });
+      if (!subject) {
+        throw new NotFoundException('Subject not found');
+      }
+
+      this.projectsService.assertCanModifyProject(subject.project, user);
+      this.projectsService.assertCanManageAsProductOwner(subject.project, user);
+      this.assertAcademicTopicsEditable(subject);
+
+      const existingCount = await topicRepo.count({
+        where: { subjectId, deletedAt: IsNull() },
+      });
+      if (existingCount > 0) {
+        throw new BadRequestException(
+          'Los gránulos ya fueron definidos. Use la edición de nombres si necesita ajustarlos.',
+        );
+      }
+
+      for (let i = 0; i < topicNames.length; i++) {
+        const topicName = topicNames[i];
+        const topic = await topicRepo.save(
+          topicRepo.create({
+            subject: { id: subject.id },
+            name: topicName,
+            order: i + 1,
+          }),
+        );
+
+        for (const label of TOPIC_CHECKLIST_LABELS) {
+          await checklistRepo.save(
+            checklistRepo.create({
+              subject: { id: subject.id },
+              topic: { id: topic.id },
+              label,
+              status: ChecklistStatus.PENDIENTE,
+              ownerRole: UserRole.FABRICA,
+            }),
+          );
+        }
+      }
+
+      await this.auditService.createLog(
+        {
+          entityType: 'SUBJECT',
+          entityId: subject.id,
+          action: AuditAction.UPDATE,
+          userId: user.id,
+          afterJson: {
+            topicsDefined: topicNames.length,
+            topicNames,
+            changeReason: dto.changeReason?.trim() ?? null,
+          },
+        },
+        manager,
+      );
+    });
+
+    return await this.getWorkspace(subjectId, user);
+  }
+
+  async updateTopicName(
+    topicId: string,
+    name: string,
+    user: UserEntity,
+  ): Promise<SubjectWorkspaceDto> {
+    if (user.role !== UserRole.PRODUCT && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only PRODUCT or ADMIN can modify topics');
+    }
+
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new BadRequestException('El nombre del gránulo es requerido.');
+    }
+
+    const topic = await this.dataSource.getRepository(TopicEntity).findOne({
+      where: { id: topicId, deletedAt: IsNull() },
+      relations: { subject: { project: { productOwner: true, factoryOwner: true } } },
+    });
+    if (!topic?.subject) {
+      throw new NotFoundException('Topic not found');
+    }
+
+    this.projectsService.assertCanModifyProject(topic.subject.project, user);
+    this.projectsService.assertCanManageAsProductOwner(topic.subject.project, user);
+    this.assertAcademicTopicsEditable(topic.subject);
+
+    const previousName = topic.name;
+    topic.name = trimmed;
+    await this.dataSource.getRepository(TopicEntity).save(topic);
+
+    await this.auditService.createLog({
+      entityType: 'TOPIC',
+      entityId: topic.id,
+      action: AuditAction.UPDATE,
+      userId: user.id,
+      beforeJson: { name: previousName },
+      afterJson: { name: trimmed },
+    });
+
+    return await this.getWorkspace(topic.subjectId, user);
+  }
+
+  private assertAcademicTopicsEditable(subject: SubjectEntity): void {
+    if (!isInstitutionalWorkflowEnabled() || subject.project.legacyWorkflow) {
+      if (subject.status !== SubjectStatus.IN_REVIEW) {
+        throw new BadRequestException(
+          'Los gránulos solo se pueden editar durante la revisión académica de la asignatura.',
+        );
+      }
+      return;
+    }
+
+    if (!isAcademicChecklistEditable(subject.operationalState)) {
+      throw new BadRequestException(
+        'Los gránulos solo se pueden definir o editar durante la revisión académica (IN_PRODUCT_ACADEMIC_REVIEW).',
+      );
+    }
+  }
+
+  private async assertSubjectHasRequiredTopics(
+    subjectId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    const topicRepo = manager.getRepository(TopicEntity);
+    const count = await topicRepo.count({
+      where: { subjectId, deletedAt: IsNull() },
+    });
+    assertSubjectTopicsCount(count);
   }
 
   private async loadSubjectContext(
@@ -1149,7 +1289,7 @@ export class SubjectsService {
   private validateChecklistForSubmit(items: ChecklistItemEntity[]): void {
     const factoryItems = items.filter((item) => item.ownerRole === UserRole.FABRICA);
     if (factoryItems.length === 0) {
-      throw new BadRequestException('Subject has no factory checklist items');
+      return;
     }
     if (factoryItems.some((item) => item.status === ChecklistStatus.RECHAZADO)) {
       throw new BadRequestException('Cannot submit subject with rejected checklist items');
@@ -1164,20 +1304,81 @@ export class SubjectsService {
     }
   }
 
+  /**
+   * Valida que Product pueda cerrar la revisión académica:
+   * - gránulos definidos (4–6)
+   * - todos los entregables PRODUCT aprobados
+   * - todos los ítems de temas/gránulos (FABRICA) aprobados por Product
+   * - sin observaciones bloqueantes ni pendientes de validación
+   */
+  async assertReadyForAcademicApproval(
+    subjectId: string,
+    user: UserEntity,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const em = manager ?? this.dataSource.manager;
+    const { items } = await this.loadSubjectContext(subjectId, user, em);
+    await this.assertSubjectHasRequiredTopics(subjectId, em);
+    this.validateChecklistForApprove(items);
+    await this.assertNoBlockingObservations(subjectId, em);
+    await this.assertNoUnresolvedObservations(subjectId, em);
+  }
+
+  async getAcademicApprovalBlockers(
+    subjectId: string,
+    user: UserEntity,
+    manager?: EntityManager,
+  ): Promise<string[]> {
+    try {
+      await this.assertReadyForAcademicApproval(subjectId, user, manager);
+      return [];
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        const response = error.getResponse();
+        if (typeof response === 'string') return [response];
+        if (typeof response === 'object' && response && 'message' in response) {
+          const message = (response as { message: string | string[] }).message;
+          return Array.isArray(message) ? message : [message];
+        }
+      }
+      throw error;
+    }
+  }
+
   private validateChecklistForApprove(items: ChecklistItemEntity[]): void {
-    if (items.length === 0) {
-      throw new BadRequestException('Subject has no checklist items');
+    const productItems = items.filter((item) => item.ownerRole === UserRole.PRODUCT);
+    const factoryItems = items.filter((item) => item.ownerRole === UserRole.FABRICA);
+
+    if (productItems.length === 0 && factoryItems.length === 0) {
+      throw new BadRequestException('La asignatura no tiene entregables configurados en el checklist');
     }
+
     if (items.some((item) => item.status === ChecklistStatus.RECHAZADO)) {
-      throw new BadRequestException('Cannot approve subject with rejected checklist items');
+      throw new BadRequestException('No puede aprobar académicamente mientras existan entregables rechazados');
     }
-    if (items.some((item) => item.status === ChecklistStatus.ENTREGADO)) {
+
+    const pendingProduct = productItems.filter((item) => item.status !== ChecklistStatus.APROBADO);
+    if (pendingProduct.length > 0) {
       throw new BadRequestException(
-        'All checklist items must be APROBADO before approval; some are only ENTREGADO',
+        `Debe aprobar todos los entregables de Product (${pendingProduct.length} pendiente(s)) antes de la aprobación académica`,
       );
     }
-    if (!items.every((item) => item.status === ChecklistStatus.APROBADO)) {
-      throw new BadRequestException('All checklist items must be APROBADO before approval');
+
+    const pendingFactory = factoryItems.filter((item) => item.status !== ChecklistStatus.APROBADO);
+    if (pendingFactory.length > 0) {
+      const notDelivered = pendingFactory.filter(
+        (item) =>
+          item.status === ChecklistStatus.PENDIENTE ||
+          item.status === ChecklistStatus.EN_PRODUCCION,
+      );
+      if (notDelivered.length > 0) {
+        throw new BadRequestException(
+          'Fábrica aún no ha entregado todos los materiales de temas/gránulos',
+        );
+      }
+      throw new BadRequestException(
+        `Debe aprobar todos los ítems de temas/gránulos (${pendingFactory.length} pendiente(s)) antes de la aprobación académica`,
+      );
     }
   }
 

@@ -13,6 +13,8 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { FactoryModule } from './factory/factory.module';
 import { InstitutionalWorkflowModule } from './institutional-workflow/institutional-workflow.module';
 import { ProjectRadicationModule } from './project-radication/project-radication.module';
+import { PlanningDashboardModule } from './planning-dashboard/planning-dashboard.module';
+import { LmsDashboardModule } from './lms-dashboard/lms-dashboard.module';
 
 @Module({
   imports: [
@@ -33,6 +35,8 @@ import { ProjectRadicationModule } from './project-radication/project-radication
           FactoryModule,
           InstitutionalWorkflowModule,
           ProjectRadicationModule,
+          PlanningDashboardModule,
+          LmsDashboardModule,
         ]
       : []),
   ],

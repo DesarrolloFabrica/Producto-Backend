@@ -26,7 +26,7 @@ import { InstitutionalWorkflowModule } from '../institutional-workflow/instituti
     forwardRef(() => ObservationsModule),
     NotificationsModule,
     MailModule,
-    InstitutionalWorkflowModule,
+    forwardRef(() => InstitutionalWorkflowModule),
   ],
   controllers: [SubjectsController],
   providers: [SubjectsService],

@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ProjectRadicationModule } from '../project-radication/project-radication.module';
+import { SubjectsModule } from '../subjects/subjects.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { AuditModule } from '../audit/audit.module';
@@ -24,6 +25,7 @@ import { SubjectOperationalCheckEntity } from './subject-operational-check.entit
     NotificationsModule,
     MailModule,
     forwardRef(() => ProjectRadicationModule),
+    forwardRef(() => SubjectsModule),
   ],
   controllers: [InstitutionalWorkflowController],
   providers: [InstitutionalWorkflowService, InstitutionalWorkflowSlaService],

@@ -55,6 +55,12 @@ export class ObservationResponseDto {
   @ApiProperty({ enum: ObservationStatus })
   status!: ObservationStatus;
 
+  @ApiProperty({ enum: ['PENDING', 'SENT'] })
+  notificationStatus!: string;
+
+  @ApiPropertyOptional({ enum: ['PENDING', 'SENT'], nullable: true })
+  correctionNotificationStatus!: string | null;
+
   @ApiProperty({ enum: RelatedEntityType })
   relatedEntityType!: RelatedEntityType;
 

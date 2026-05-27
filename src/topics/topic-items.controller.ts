@@ -1,4 +1,4 @@
-import { Body, Controller, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Param, ParseUUIDPipe, Patch, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiForbiddenResponse,
@@ -14,31 +14,30 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserEntity } from '../users/user.entity';
-import { AddTopicsDto } from './dto/add-topics.dto';
-import { SubjectsService } from '../subjects/subjects.service';
 import { SubjectWorkspaceDto } from '../subjects/dto/subject-workspace.dto';
+import { SubjectsService } from '../subjects/subjects.service';
+import { UpdateTopicDto } from './dto/update-topic.dto';
 
 @ApiTags('topics')
 @ApiBearerAuth('bearer')
-@Controller('subjects')
+@Controller('topics')
 @UseGuards(JwtAuthGuard)
-export class TopicsController {
+export class TopicItemsController {
   constructor(private readonly subjectsService: SubjectsService) {}
 
-  @Post(':subjectId/topics')
+  @Patch(':topicId')
   @UseGuards(RolesGuard)
   @Roles(UserRole.PRODUCT, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Definir gránulos/temas en revisión académica Product' })
+  @ApiOperation({ summary: 'Renombrar gránulo durante revisión académica' })
   @ApiOkResponse({ type: SubjectWorkspaceDto })
   @ApiUnauthorizedResponse()
   @ApiForbiddenResponse()
   @ApiNotFoundResponse()
-  async addTopics(
-    @Param('subjectId', ParseUUIDPipe) subjectId: string,
-    @Body() dto: AddTopicsDto,
+  async updateTopic(
+    @Param('topicId', ParseUUIDPipe) topicId: string,
+    @Body() dto: UpdateTopicDto,
     @CurrentUser() user: UserEntity,
   ): Promise<SubjectWorkspaceDto> {
-    return await this.subjectsService.addTopicsToSubject(subjectId, dto, user);
+    return await this.subjectsService.updateTopicName(topicId, dto.name, user);
   }
-
 }

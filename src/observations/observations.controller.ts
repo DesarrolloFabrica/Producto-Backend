@@ -23,14 +23,19 @@ import {
   ObservationResponseDto,
 } from './dto/observation-response.dto';
 import { UpdateObservationStatusResponseDto } from './dto/update-observation-status-response.dto';
+import { ObservationBatchResponseDto } from './dto/observation-batch-response.dto';
 import { ObservationsService } from './observations.service';
+import { ObservationBatchesService } from './observation-batches.service';
 
 @ApiTags('observations')
 @ApiBearerAuth('bearer')
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class ObservationsController {
-  constructor(private readonly observationsService: ObservationsService) {}
+  constructor(
+    private readonly observationsService: ObservationsService,
+    private readonly observationBatchesService: ObservationBatchesService,
+  ) {}
 
   @Post('observations')
   @UseGuards(RolesGuard)
@@ -117,5 +122,29 @@ export class ObservationsController {
     @CurrentUser() user: UserEntity,
   ): Promise<UpdateObservationStatusResponseDto> {
     return await this.observationsService.reopen(id, dto.reason, user);
+  }
+
+  @Post('subjects/:subjectId/observation-batches/send-to-factory')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Enviar observaciones pendientes a Fábrica (lote)' })
+  @ApiOkResponse({ type: ObservationBatchResponseDto })
+  async sendObservationsToFactory(
+    @Param('subjectId', ParseUUIDPipe) subjectId: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<ObservationBatchResponseDto> {
+    return await this.observationBatchesService.sendObservationsToFactory(subjectId, user);
+  }
+
+  @Post('subjects/:subjectId/observation-batches/notify-corrections')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.FABRICA, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Notificar correcciones realizadas a Product (lote)' })
+  @ApiOkResponse({ type: ObservationBatchResponseDto })
+  async notifyCorrectionsToProduct(
+    @Param('subjectId', ParseUUIDPipe) subjectId: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<ObservationBatchResponseDto> {
+    return await this.observationBatchesService.notifyCorrectionsToProduct(subjectId, user);
   }
 }

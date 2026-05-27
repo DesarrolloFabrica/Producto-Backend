@@ -2,8 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { InstitutionalOperationalAction } from '../common/enums/institutional-operational-action.enum';
+import type { ObservationEntity } from '../observations/observation.entity';
 import { ProjectDetailDto } from '../projects/dto/project-response.dto';
 import { SubjectEntity } from '../subjects/subject.entity';
+import {
+  buildFactoryCorrectionsBatchEmail,
+  buildProductObservationsBatchEmail,
+} from './templates/observation-batch.template';
 import { buildProductRequestCreatedEmail } from './templates/product-request-created.template';
 import { buildProductRequestUpdatedEmail, type ProductRequestChangeSummary } from './templates/product-request-updated.template';
 
@@ -33,6 +38,12 @@ export class MailService {
     return email || null;
   }
 
+  private resolveRecipient(primary?: string | null): string | null {
+    const direct = primary?.trim();
+    if (direct) return direct;
+    return this.getNotifyEmail();
+  }
+
   private isSmtpConfigured(): boolean {
     const host = (process.env.EMAIL_HOST ?? '').trim();
     const user = (process.env.EMAIL_USER ?? '').trim();
@@ -41,9 +52,7 @@ export class MailService {
   }
 
   private getFromAddress(): string {
-    return (
-      process.env.EMAIL_FROM?.trim() || 'Producto CUN <no-reply@cun.edu.co>'
-    );
+    return process.env.EMAIL_FROM?.trim() || 'Producto CUN <no-reply@cun.edu.co>';
   }
 
   private getTransporter(): Transporter | null {
@@ -54,8 +63,7 @@ export class MailService {
     }
 
     const port = Number(process.env.EMAIL_PORT ?? 587);
-    const secure =
-      (process.env.EMAIL_SECURE ?? 'false').toLowerCase() === 'true';
+    const secure = (process.env.EMAIL_SECURE ?? 'false').toLowerCase() === 'true';
 
     this.transporter = nodemailer.createTransport({
       host: process.env.EMAIL_HOST,
@@ -112,25 +120,20 @@ export class MailService {
       this.logger.log(`Correo enviado a ${to} — asunto: ${subject}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Error al enviar correo (el proyecto ya fue creado): ${message}`);
+      this.logger.warn(`Error al enviar correo: ${message}`);
     }
   }
 
   async sendProductRequestCreatedEmail(project: ProjectDetailDto): Promise<void> {
-    if (!this.isEmailEnabled()) {
-      return;
-    }
+    if (!this.isEmailEnabled()) return;
 
     const to = this.getNotifyEmail();
     if (!to) {
-      this.logger.warn(
-        'PRODUCT_REQUEST_NOTIFY_EMAIL no configurado. Correo de nueva solicitud omitido.',
-      );
+      this.logger.warn('PRODUCT_REQUEST_NOTIFY_EMAIL no configurado. Correo de nueva solicitud omitido.');
       return;
     }
 
     const { subject, html, text } = buildProductRequestCreatedEmail(project);
-
     await this.sendMail({ to, subject, html, text });
   }
 
@@ -138,9 +141,7 @@ export class MailService {
     project: ProjectDetailDto,
     changeSummary: ProductRequestChangeSummary,
   ): Promise<void> {
-    if (!this.isEmailEnabled()) {
-      return;
-    }
+    if (!this.isEmailEnabled()) return;
 
     const to = this.getNotifyEmail();
     if (!to) {
@@ -149,6 +150,40 @@ export class MailService {
     }
 
     const { subject, html, text } = buildProductRequestUpdatedEmail(project, changeSummary);
+    await this.sendMail({ to, subject, html, text });
+  }
+
+  async sendProductObservationsBatchEmail(params: {
+    subject: SubjectEntity;
+    observations: ObservationEntity[];
+    batchId: string;
+  }): Promise<void> {
+    if (!this.isEmailEnabled()) return;
+
+    const to = this.resolveRecipient(params.subject.project?.factoryOwner?.email);
+    if (!to) {
+      this.logger.warn('Sin destinatario para correo de observaciones a Fábrica.');
+      return;
+    }
+
+    const { subject, html, text } = buildProductObservationsBatchEmail(params);
+    await this.sendMail({ to, subject, html, text });
+  }
+
+  async sendFactoryCorrectionsBatchEmail(params: {
+    subject: SubjectEntity;
+    observations: ObservationEntity[];
+    batchId: string;
+  }): Promise<void> {
+    if (!this.isEmailEnabled()) return;
+
+    const to = this.resolveRecipient(params.subject.project?.productOwner?.email);
+    if (!to) {
+      this.logger.warn('Sin destinatario para correo de correcciones a Product.');
+      return;
+    }
+
+    const { subject, html, text } = buildFactoryCorrectionsBatchEmail(params);
     await this.sendMail({ to, subject, html, text });
   }
 

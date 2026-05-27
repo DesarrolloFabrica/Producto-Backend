@@ -155,4 +155,10 @@ export class OperationalWorkspaceDto {
 
   @ApiProperty({ enum: InstitutionalOperationalAction, isArray: true })
   availableActions!: InstitutionalOperationalAction[];
+
+  @ApiPropertyOptional()
+  academicApprovalReady?: boolean;
+
+  @ApiPropertyOptional({ type: [String] })
+  academicApprovalBlockers?: string[];
 }

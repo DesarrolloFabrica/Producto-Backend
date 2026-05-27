@@ -10,7 +10,9 @@ import {
   RelationId,
   UpdateDateColumn,
 } from 'typeorm';
+import { ObservationNotificationStatus } from '../common/enums/observation-notification-status.enum';
 import { ObservationStatus } from '../common/enums/observation-status.enum';
+import { ObservationBatchEntity } from './observation-batch.entity';
 import { Priority } from '../common/enums/priority.enum';
 import { RelatedEntityType } from '../common/enums/related-entity-type.enum';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -87,6 +89,41 @@ export class ObservationEntity {
     default: ObservationStatus.ABIERTA,
   })
   status!: ObservationStatus;
+
+  @Index()
+  @Column({
+    type: 'enum',
+    enum: ObservationNotificationStatus,
+    enumName: 'observation_notification_status',
+    default: ObservationNotificationStatus.SENT,
+  })
+  notificationStatus!: ObservationNotificationStatus;
+
+  @Column({
+    type: 'enum',
+    enum: ObservationNotificationStatus,
+    enumName: 'observation_notification_status',
+    nullable: true,
+  })
+  correctionNotificationStatus!: ObservationNotificationStatus | null;
+
+  @Index()
+  @ManyToOne(() => ObservationBatchEntity, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'notificationBatchId' })
+  notificationBatch!: ObservationBatchEntity | null;
+
+  @RelationId((observation: ObservationEntity) => observation.notificationBatch)
+  notificationBatchId!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  sentAt!: Date | null;
+
+  @ManyToOne(() => UserEntity, { nullable: true })
+  @JoinColumn({ name: 'sentById' })
+  sentBy!: UserEntity | null;
+
+  @RelationId((observation: ObservationEntity) => observation.sentBy)
+  sentById!: string | null;
 
   @Column({ type: 'enum', enum: RelatedEntityType, enumName: 'related_entity_type' })
   relatedEntityType!: RelatedEntityType;

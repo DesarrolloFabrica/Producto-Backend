@@ -1,12 +1,15 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { Brackets, DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { AuditAction } from '../common/enums/audit-action.enum';
+import { ObservationNotificationStatus } from '../common/enums/observation-notification-status.enum';
 import { ObservationStatus } from '../common/enums/observation-status.enum';
 import { ProjectStatus } from '../common/enums/project-status.enum';
 import { SubjectStatus } from '../common/enums/subject-status.enum';
@@ -39,8 +42,7 @@ import { UpdateObservationStatusResponseDto } from './dto/update-observation-sta
 import { ObservationMessageEntity } from './observation-message.entity';
 import { ObservationEntity } from './observation.entity';
 
-// Only fully open observations block delivery/review. Once Fábrica marks a correction
-// as applied (EN_CORRECCION), Product must validate it, but the item can re-enter review.
+// Only fully open observations that were sent to Fábrica block delivery/review.
 const BLOCKING_STATUSES = [ObservationStatus.ABIERTA];
 const UNRESOLVED_STATUSES = [ObservationStatus.ABIERTA, ObservationStatus.EN_CORRECCION];
 
@@ -63,6 +65,7 @@ export class ObservationsService {
     private readonly checklistRepo: Repository<ChecklistItemEntity>,
     @InjectRepository(SemesterEntity)
     private readonly semesterRepo: Repository<SemesterEntity>,
+    @Inject(forwardRef(() => ProjectsService))
     private readonly projectsService: ProjectsService,
     private readonly auditService: AuditService,
     private readonly statusHistoryService: StatusHistoryService,
@@ -98,6 +101,15 @@ export class ObservationsService {
       .createQueryBuilder('o')
       .where('o.status IN (:...statuses)', { statuses })
       .andWhere(
+        new Brackets((statusQb) => {
+          statusQb
+            .where('o.status != :abierta', { abierta: ObservationStatus.ABIERTA })
+            .orWhere('o.notificationStatus = :sent', {
+              sent: ObservationNotificationStatus.SENT,
+            });
+        }),
+      )
+      .andWhere(
         new Brackets((qb) => {
           qb.where('o.subjectId = :subjectId', { subjectId })
             .orWhere(
@@ -129,6 +141,7 @@ export class ObservationsService {
       .createQueryBuilder('o')
       .where('o.projectId = :projectId', { projectId })
       .andWhere('o.status IN (:...blocking)', { blocking: BLOCKING_STATUSES })
+      .andWhere('o.notificationStatus = :sent', { sent: ObservationNotificationStatus.SENT })
       .getCount();
 
     return count > 0;
@@ -148,6 +161,11 @@ export class ObservationsService {
       await this.validateRelatedEntity(dto, manager);
       await this.assertNoProductObservationOnApprovedSubject(dto, user, manager);
 
+      const notificationStatus =
+        user.role === UserRole.PRODUCT
+          ? ObservationNotificationStatus.PENDING
+          : ObservationNotificationStatus.SENT;
+
       const observationRepo = manager.getRepository(ObservationEntity);
       const observation = await observationRepo.save(
         observationRepo.create({
@@ -159,6 +177,12 @@ export class ObservationsService {
           role: user.role,
           text: dto.text,
           status: ObservationStatus.ABIERTA,
+          notificationStatus,
+          sentAt: notificationStatus === ObservationNotificationStatus.SENT ? new Date() : null,
+          sentBy:
+            notificationStatus === ObservationNotificationStatus.SENT
+              ? ({ id: user.id } as UserEntity)
+              : null,
           relatedEntityType: dto.relatedEntityType,
           relatedEntityId: dto.relatedEntityId,
           priority: dto.priority,
@@ -183,49 +207,11 @@ export class ObservationsService {
         manager,
       );
 
-      if (user.role === UserRole.PRODUCT) {
-        const projectRepo = manager.getRepository(ProjectEntity);
-        const previousStatus = project.status;
-        if (previousStatus !== ProjectStatus.FEEDBACK_PENDING) {
-          await projectRepo.update(
-            { id: dto.projectId },
-            { status: ProjectStatus.FEEDBACK_PENDING },
-          );
-          await this.statusHistoryService.recordIfChanged(
-            {
-              entityType: 'PROJECT',
-              entityId: dto.projectId,
-              fromStatus: previousStatus,
-              toStatus: ProjectStatus.FEEDBACK_PENDING,
-              changedById: user.id,
-            },
-            manager,
-          );
-        }
-      } else {
+      if (user.role === UserRole.FABRICA) {
         await this.projectWorkflowService.updateProjectStatus(dto.projectId, user.id, manager);
       }
 
-      if (user.role === UserRole.PRODUCT) {
-        await this.notificationsService.notifyFactoryOwner(
-          project.factoryOwner?.id,
-          {
-            type: NotificationType.ACTION,
-            title: 'Nueva observación',
-            message: `Se registró una observación en el proyecto ${project.program}.`,
-            entityType: 'OBSERVATION',
-            entityId: observation.id,
-            eventType: NotificationEventType.OBSERVATION_CREATED,
-            projectId: project.id,
-            subjectId: dto.subjectId ?? undefined,
-            actionUrl: dto.subjectId
-              ? `/subjects/${dto.subjectId}?focus=correction`
-              : `/projects/${project.id}`,
-            severity: 'attention',
-          },
-          manager,
-        );
-      } else if (user.role === UserRole.FABRICA && project.productOwner?.id) {
+      if (user.role === UserRole.FABRICA && project.productOwner?.id) {
         await this.notificationsService.notifyUser(
           project.productOwner.id,
           {
@@ -277,14 +263,15 @@ export class ObservationsService {
       throw new NotFoundException('Subject not found');
     }
     this.projectsService.assertCanViewProject(subject.project, user);
-    return await this.findBySubjectForProject(subjectId, subject.project.id);
+    return await this.findBySubjectForProject(subjectId, subject.project.id, user);
   }
 
   async findBySubjectForProject(
     subjectId: string,
     projectId: string,
+    user?: UserEntity,
   ): Promise<ObservationResponseDto[]> {
-    const observations = await this.observationRepo
+    const qb = this.observationRepo
       .createQueryBuilder('o')
       .leftJoinAndSelect('o.author', 'author')
       .leftJoinAndSelect('o.resolvedBy', 'resolvedBy')
@@ -294,8 +281,9 @@ export class ObservationsService {
       .leftJoin('o.topic', 'topic')
       .leftJoin('checklistItem.subject', 'checklistSubject')
       .where(
-        new Brackets((qb) => {
-          qb.where('o.subjectId = :subjectId', { subjectId })
+        new Brackets((sub) => {
+          sub
+            .where('o.subjectId = :subjectId', { subjectId })
             .orWhere(
               '(o.relatedEntityType = :subjectType AND o.relatedEntityId = :subjectId)',
               { subjectType: RelatedEntityType.SUBJECT, subjectId },
@@ -305,10 +293,16 @@ export class ObservationsService {
         }),
       )
       .andWhere(
-        new Brackets((qb) => {
-          qb.where('o.projectId = :projectId', { projectId }).orWhere('o.projectId IS NULL');
+        new Brackets((sub) => {
+          sub.where('o.projectId = :projectId', { projectId }).orWhere('o.projectId IS NULL');
         }),
-      )
+      );
+
+    if (user?.role === UserRole.FABRICA) {
+      qb.andWhere('o.notificationStatus = :sent', { sent: ObservationNotificationStatus.SENT });
+    }
+
+    const observations = await qb
       .orderBy('o.createdAt', 'DESC')
       .addOrderBy('messages.createdAt', 'ASC')
       .getMany();
@@ -419,6 +413,10 @@ export class ObservationsService {
       observation.text = reason.trim();
       observation.resolvedAt = null;
       observation.resolvedBy = null;
+      observation.notificationStatus = ObservationNotificationStatus.PENDING;
+      observation.correctionNotificationStatus = null;
+      observation.sentAt = null;
+      observation.sentBy = null;
       await observationRepo.save(observation);
 
       await this.statusHistoryService.recordIfChanged(
@@ -440,25 +438,6 @@ export class ObservationsService {
           userId: user.id,
           beforeJson: { status: previousStatus },
           afterJson: { status: ObservationStatus.ABIERTA, text: observation.text, reopened: true },
-        },
-        manager,
-      );
-
-      await this.notificationsService.notifyFactoryOwner(
-        observation.project.factoryOwner?.id,
-        {
-          type: NotificationType.CRITICAL,
-          title: 'Corrección reabierta por Product',
-          message: 'Product solicitó un nuevo ajuste sobre una observación ya corregida.',
-          entityType: 'OBSERVATION',
-          entityId: observation.id,
-          eventType: NotificationEventType.OBSERVATION_REOPENED,
-          projectId: observation.project.id,
-          subjectId: observation.subjectId ?? undefined,
-          actionUrl: observation.subjectId
-            ? `/subjects/${observation.subjectId}?focus=correction`
-            : `/projects/${observation.project.id}`,
-          severity: 'critical',
         },
         manager,
       );
@@ -510,6 +489,9 @@ export class ObservationsService {
         observation.resolvedBy = { id: user.id } as UserEntity;
         observation.resolvedAt = new Date();
       }
+      if (nextStatus === ObservationStatus.EN_CORRECCION) {
+        observation.correctionNotificationStatus = ObservationNotificationStatus.PENDING;
+      }
       await observationRepo.save(observation);
 
       await this.statusHistoryService.recordIfChanged(
@@ -535,26 +517,6 @@ export class ObservationsService {
         manager,
       );
 
-      if (nextStatus === ObservationStatus.EN_CORRECCION && observation.project.productOwner?.id) {
-        await this.notificationsService.notifyUser(
-          observation.project.productOwner.id,
-          {
-            type: NotificationType.ACTION,
-            title: 'Corrección aplicada',
-            message: 'Fábrica marcó una observación como corregida. Valida cuando corresponda.',
-            entityType: 'OBSERVATION',
-            entityId: observation.id,
-            eventType: NotificationEventType.OBSERVATION_CORRECTION_APPLIED,
-            projectId: observation.project.id,
-            subjectId: observation.subjectId ?? undefined,
-            actionUrl: observation.subjectId
-              ? `/subjects/${observation.subjectId}`
-              : `/projects/${observation.project.id}`,
-            severity: 'attention',
-          },
-          manager,
-        );
-      }
       if (nextStatus === ObservationStatus.RESUELTA) {
         await this.notificationsService.notifyFactoryOwner(
           observation.project.factoryOwner?.id,
@@ -928,6 +890,8 @@ export class ObservationsService {
       role: observation.role,
       text: observation.text,
       status: observation.status,
+      notificationStatus: observation.notificationStatus,
+      correctionNotificationStatus: observation.correctionNotificationStatus,
       relatedEntityType: observation.relatedEntityType,
       relatedEntityId: observation.relatedEntityId,
       priority: observation.priority,

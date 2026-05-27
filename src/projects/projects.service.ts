@@ -598,7 +598,7 @@ export class ProjectsService {
 
     this.validateSemesterNumbers(dto);
     for (const semester of dto.semesters) {
-      this.assertSubjectsTopicsCount(semester.subjects);
+      this.assertSubjectsTopicsCountIfProvided(semester.subjects);
     }
 
     const activation = resolveActivationOnCreate(dto.subjectMatterExpertType);
@@ -680,8 +680,9 @@ export class ProjectsService {
             );
           }
 
-          for (let i = 0; i < subjectDto.topics.length; i++) {
-            const topicName = subjectDto.topics[i];
+          const topicNames = (subjectDto.topics ?? []).map((t) => t.trim()).filter(Boolean);
+          for (let i = 0; i < topicNames.length; i++) {
+            const topicName = topicNames[i];
             const topic = await topicRepository.save(
               topicRepository.create({
                 subject: { id: subject.id },
@@ -843,14 +844,14 @@ export class ProjectsService {
       throw new ForbiddenException('Only PRODUCT or ADMIN can modify semesters');
     }
 
-    this.assertSubjectsTopicsCount(dto.subjects);
+    this.assertSubjectsTopicsCountIfProvided(dto.subjects);
 
     const changeSummary = {
       changeType: 'SEMESTER_ADDED',
       semesterNumber: dto.semesterNumber,
       subjectsAdded: dto.subjects.map((subject) => ({
         name: subject.name.trim(),
-        topics: subject.topics.map((topic) => topic.trim()).filter(Boolean),
+        topics: (subject.topics ?? []).map((topic) => topic.trim()).filter(Boolean),
       })),
       changeReason: dto.changeReason?.trim() || null,
       changedAt: new Date().toISOString(),
@@ -924,8 +925,9 @@ export class ProjectsService {
           );
         }
 
-        for (let i = 0; i < subjectDto.topics.length; i++) {
-          const topicName = subjectDto.topics[i].trim();
+        const topicNames = (subjectDto.topics ?? []).map((t) => t.trim()).filter(Boolean);
+        for (let i = 0; i < topicNames.length; i++) {
+          const topicName = topicNames[i];
           const topic = await topicRepo.save(
             topicRepo.create({
               subject: { id: subject.id },
@@ -985,7 +987,11 @@ export class ProjectsService {
       description: `Semestre ${dto.semesterNumber} agregado`,
       details: [
         `Semestre ${dto.semesterNumber}`,
-        ...dto.subjects.map((subject) => `Asignatura: ${subject.name.trim()} (${subject.topics.map((topic) => topic.trim()).join(', ')})`),
+        ...dto.subjects.map((subject) => {
+          const topics = (subject.topics ?? []).map((topic) => topic.trim()).filter(Boolean);
+          const topicsLabel = topics.length > 0 ? topics.join(', ') : 'sin gránulos';
+          return `Asignatura: ${subject.name.trim()} (${topicsLabel})`;
+        }),
       ],
       changeReason: dto.changeReason?.trim() || null,
       changedBy: `${user.name} <${user.email}>`,
@@ -1024,9 +1030,11 @@ export class ProjectsService {
     }
   }
 
-  private assertSubjectsTopicsCount(subjects: { topics: string[] }[]): void {
+  private assertSubjectsTopicsCountIfProvided(subjects: { topics?: string[] }[]): void {
     for (const subject of subjects) {
-      const count = subject.topics.map((topic) => topic.trim()).filter(Boolean).length;
+      const topics = subject.topics ?? [];
+      if (topics.length === 0) continue;
+      const count = topics.map((topic) => topic.trim()).filter(Boolean).length;
       assertSubjectTopicsCount(count);
     }
   }

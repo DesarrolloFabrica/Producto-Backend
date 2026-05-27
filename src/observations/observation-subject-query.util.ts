@@ -1,4 +1,5 @@
 import { Brackets, Repository } from 'typeorm';
+import { ObservationNotificationStatus } from '../common/enums/observation-notification-status.enum';
 import { ObservationStatus } from '../common/enums/observation-status.enum';
 import { RelatedEntityType } from '../common/enums/related-entity-type.enum';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -55,6 +56,10 @@ export async function loadProductObservationCountsBySubject(
     .addSelect('obs.status', 'status')
     .addSelect('COUNT(*)', 'count')
     .where('obs.role = :role', { role: UserRole.PRODUCT })
+    .andWhere(
+      '(obs.status != :abierta OR obs."notificationStatus" = :sent)',
+      { abierta: ObservationStatus.ABIERTA, sent: ObservationNotificationStatus.SENT },
+    )
     .setParameter('subjectEntity', RelatedEntityType.SUBJECT);
 
   applyObservationsForSubjectsFilter(qb, subjectIds);
