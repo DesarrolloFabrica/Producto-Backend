@@ -100,6 +100,21 @@ export class InstitutionalWorkflowService {
     }
   }
 
+  private isFactoryMainSubjectAction(action: InstitutionalOperationalAction): boolean {
+    return (
+      action === InstitutionalOperationalAction.FACTORY_START_PRODUCTION ||
+      action === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT
+    );
+  }
+
+  private assertNoSubjectFactoryMainTransition(subject: SubjectEntity, action: InstitutionalOperationalAction): void {
+    if (this.usesInstitutionalWorkflow(subject.project) && this.isFactoryMainSubjectAction(action)) {
+      throw new BadRequestException(
+        `La produccion institucional se gestiona por semestre. Use /projects/${subject.project.id}/semesters/${subject.semester.id}/operations`,
+      );
+    }
+  }
+
   async initializeSubjectOperational(
     subjectId: string,
     manager: EntityManager,
@@ -163,6 +178,7 @@ export class InstitutionalWorkflowService {
     }
 
     this.assertTransitionOwnership(subject, user);
+    this.assertNoSubjectFactoryMainTransition(subject, dto.action);
 
     if (user.role !== UserRole.ADMIN) {
       const allowed = allowedActionsForRole(user.role, subject.operationalState);
@@ -197,6 +213,7 @@ export class InstitutionalWorkflowService {
       relations: { project: { productOwner: true, factoryOwner: true }, semester: true },
     });
     if (!fresh) throw new NotFoundException('Asignatura no encontrada');
+    this.assertNoSubjectFactoryMainTransition(fresh, dto.action);
 
     if (dto.action === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) {
       await this.subjectsService.assertReadyForAcademicApproval(subjectId, user, manager);
@@ -326,7 +343,9 @@ export class InstitutionalWorkflowService {
     const correctionInFactory = isCorrectionInFactory(subject.operationalState);
 
     let academicApprovalBlockers: string[] = [];
-    let filteredActions = uniqueActions;
+    let filteredActions = this.usesInstitutionalWorkflow(subject.project)
+      ? uniqueActions.filter((action) => !this.isFactoryMainSubjectAction(action))
+      : uniqueActions;
     if (
       uniqueActions.includes(InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) ||
       subject.operationalState === InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW

@@ -1,8 +1,10 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
@@ -138,6 +140,7 @@ export class SubjectsService {
     private readonly subjectRepo: Repository<SubjectEntity>,
     @InjectRepository(ChecklistItemEntity)
     private readonly checklistRepo: Repository<ChecklistItemEntity>,
+    @Inject(forwardRef(() => ProjectsService))
     private readonly projectsService: ProjectsService,
     private readonly observationsService: ObservationsService,
     private readonly auditService: AuditService,
@@ -148,6 +151,7 @@ export class SubjectsService {
     private readonly semesterWorkflowService: SemesterWorkflowService,
     private readonly projectWorkflowService: ProjectWorkflowService,
     private readonly mailService: MailService,
+    @Inject(forwardRef(() => InstitutionalWorkflowService))
     private readonly institutionalWorkflowService: InstitutionalWorkflowService,
   ) {}
 
@@ -597,7 +601,7 @@ export class SubjectsService {
         await subjectRepo.save(subject);
 
         if (usesInstitutional) {
-          postInstitutionalAction = InstitutionalOperationalAction.FACTORY_START_PRODUCTION;
+          postInstitutionalAction = null;
         } else if (subject.project.productOwner?.id) {
           await this.notificationsService.notifyUser(
             subject.project.productOwner.id,
@@ -639,7 +643,7 @@ export class SubjectsService {
         await this.progressService.calculateSubjectProgress(subject.id, manager);
 
         if (usesInstitutional) {
-          postInstitutionalAction = InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT;
+          postInstitutionalAction = null;
         } else {
           await this.applySubjectStatusChange(
             subject,

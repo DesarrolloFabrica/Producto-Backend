@@ -7,6 +7,7 @@ import { MailModule } from '../mail/mail.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ObservationsModule } from '../observations/observations.module';
 import { ProjectEntity } from '../projects/project.entity';
+import { SemesterEntity } from '../semesters/semester.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { ProjectInstitutionalWorkflowService } from './project-institutional-workflow.service';
 import { ProjectOperationalTransitionEntity } from './project-operational-transition.entity';
@@ -18,6 +19,7 @@ import { ProjectRadicationReadinessService } from './project-radication-readines
   imports: [
     TypeOrmModule.forFeature([
       ProjectEntity,
+      SemesterEntity,
       SubjectEntity,
       ProjectRadicationEntity,
       ProjectOperationalTransitionEntity,

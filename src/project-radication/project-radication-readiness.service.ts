@@ -7,6 +7,7 @@ import { SubjectStatus } from '../common/enums/subject-status.enum';
 import { isInstitutionalWorkflowEnabled } from '../institutional-workflow/institutional-workflow.config';
 import { ObservationsService } from '../observations/observations.service';
 import { ProjectEntity } from '../projects/project.entity';
+import { SemesterEntity } from '../semesters/semester.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
 import {
   ProjectRadicationReadinessDto,
@@ -36,6 +37,8 @@ export class ProjectRadicationReadinessService {
     private readonly projectRepo: Repository<ProjectEntity>,
     @InjectRepository(SubjectEntity)
     private readonly subjectRepo: Repository<SubjectEntity>,
+    @InjectRepository(SemesterEntity)
+    private readonly semesterRepo: Repository<SemesterEntity>,
     @Inject(forwardRef(() => ObservationsService))
     private readonly observationsService: ObservationsService,
   ) {}
@@ -47,6 +50,7 @@ export class ProjectRadicationReadinessService {
   async getReadiness(projectId: string, manager?: EntityManager): Promise<ProjectRadicationReadinessDto> {
     const projectRepository = manager?.getRepository(ProjectEntity) ?? this.projectRepo;
     const subjectRepository = manager?.getRepository(SubjectEntity) ?? this.subjectRepo;
+    const semesterRepository = manager?.getRepository(SemesterEntity) ?? this.semesterRepo;
 
     const project = await projectRepository.findOne({
       where: { id: projectId, deletedAt: IsNull() },
@@ -74,6 +78,19 @@ export class ProjectRadicationReadinessService {
       };
     }
 
+    const scopeSemesters = await semesterRepository
+      .createQueryBuilder('sem')
+      .leftJoinAndSelect(
+        'sem.subjects',
+        'subject',
+        'subject.deletedAt IS NULL AND subject.created_from_change = false',
+      )
+      .where('sem.projectId = :projectId', { projectId })
+      .andWhere('sem.deletedAt IS NULL')
+      .andWhere('sem.created_from_change = false')
+      .orderBy('sem.semesterNumber', 'ASC')
+      .getMany();
+
     const scopeSubjects = await subjectRepository
       .createQueryBuilder('s')
       .innerJoinAndSelect('s.semester', 'sem')
@@ -89,6 +106,24 @@ export class ProjectRadicationReadinessService {
 
     let subjectsApproved = 0;
     let subjectsPending = 0;
+
+    for (const semester of scopeSemesters) {
+      bySemesterMap.set(semester.semesterNumber, {
+        semesterNumber: semester.semesterNumber,
+        total: semester.subjects?.length ?? 0,
+        approved: 0,
+        pending: 0,
+        statesBreakdown: { [semester.operationalState]: 1 },
+      });
+      const semesterReady =
+        semester.operationalState === InstitutionalOperationalState.PENDING_PROJECT_RADICATION ||
+        semester.operationalState === InstitutionalOperationalState.FINALIZED;
+      if (!semesterReady) {
+        blockers.push(
+          `Semestre ${semester.semesterNumber} aun en flujo operacional (${semester.operationalState})`,
+        );
+      }
+    }
 
     for (const subject of scopeSubjects) {
       const semNum = subject.semester.semesterNumber;
@@ -138,16 +173,16 @@ export class ProjectRadicationReadinessService {
       }
     }
 
-    if (scopeSubjects.length === 0) {
+    if (scopeSemesters.length === 0 || scopeSubjects.length === 0) {
       blockers.push('No hay materias en el alcance inicial de radicación');
     }
 
     const allReady =
-      scopeSubjects.length > 0 &&
-      scopeSubjects.every(
+      scopeSemesters.length > 0 &&
+      scopeSemesters.every(
         (s) =>
           s.operationalState === InstitutionalOperationalState.PENDING_PROJECT_RADICATION &&
-          s.status === SubjectStatus.APPROVED,
+          s.subjects.every((subject) => subject.status === SubjectStatus.APPROVED),
       ) &&
       blockers.length === 0;
 

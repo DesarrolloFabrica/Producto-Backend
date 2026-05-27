@@ -147,4 +147,28 @@ export class ObservationsController {
   ): Promise<ObservationBatchResponseDto> {
     return await this.observationBatchesService.notifyCorrectionsToProduct(subjectId, user);
   }
+
+  @Post('semesters/:semesterId/observation-batches/send-to-factory')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Enviar observaciones pendientes del semestre a Fabrica (lote)' })
+  @ApiOkResponse({ type: ObservationBatchResponseDto })
+  async sendSemesterObservationsToFactory(
+    @Param('semesterId', ParseUUIDPipe) semesterId: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<ObservationBatchResponseDto> {
+    return await this.observationBatchesService.sendSemesterObservationsToFactory(semesterId, user);
+  }
+
+  @Post('semesters/:semesterId/observation-batches/notify-corrections')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.FABRICA, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Notificar correcciones realizadas del semestre a Product (lote)' })
+  @ApiOkResponse({ type: ObservationBatchResponseDto })
+  async notifySemesterCorrectionsToProduct(
+    @Param('semesterId', ParseUUIDPipe) semesterId: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<ObservationBatchResponseDto> {
+    return await this.observationBatchesService.notifySemesterCorrectionsToProduct(semesterId, user);
+  }
 }
