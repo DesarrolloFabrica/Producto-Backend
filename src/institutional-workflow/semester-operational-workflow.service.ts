@@ -238,6 +238,7 @@ export class SemesterOperationalWorkflowService {
     semesterId: string,
     dto: OperationalTransitionDto,
     user: UserEntity,
+    options?: { bypassReadinessCheck?: boolean },
   ): Promise<void> {
     const semesterRepo = manager.getRepository(SemesterEntity);
     const subjectRepo = manager.getRepository(SubjectEntity);
@@ -251,7 +252,9 @@ export class SemesterOperationalWorkflowService {
     const next = resolveNextInstitutionalState({ current: fromState, action: dto.action });
     if (!next) throw new BadRequestException('Transicion no valida para el estado actual');
 
-    await this.assertReadyForAction(fresh, dto.action, user, manager);
+    if (!options?.bypassReadinessCheck) {
+      await this.assertReadyForAction(fresh, dto.action, user, manager);
+    }
 
     const now = new Date();
     const update: QueryDeepPartialEntity<SemesterEntity> = {
@@ -300,6 +303,57 @@ export class SemesterOperationalWorkflowService {
     }
     if (dto.action === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) {
       await this.projectRadicationWorkflow.onSubjectApprovedForRadication(fresh.project.id, manager, user);
+    }
+  }
+
+  /**
+   * Cuando todas las materias del semestre ya están aprobadas académicamente (PENDING_PROJECT_RADICATION),
+   * pero el semestre sigue en IN_PRODUCT_ACADEMIC_REVIEW, aplica la transición de cierre de revisión académica.
+   */
+  async syncSemestersWhenAllSubjectsReadyForRadication(
+    projectId: string,
+    manager: EntityManager,
+    user: UserEntity,
+  ): Promise<void> {
+    const semesterRepo = manager.getRepository(SemesterEntity);
+    const subjectRepo = manager.getRepository(SubjectEntity);
+
+    const semesters = await semesterRepo.find({
+      where: {
+        project: { id: projectId },
+        deletedAt: IsNull(),
+        createdFromChange: false,
+      },
+    });
+
+    for (const semester of semesters) {
+      if (semester.operationalState !== InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW) {
+        continue;
+      }
+
+      const subjects = await subjectRepo.find({
+        where: {
+          semester: { id: semester.id },
+          deletedAt: IsNull(),
+          createdFromChange: false,
+        },
+      });
+      if (subjects.length === 0) continue;
+
+      const allSubjectsReady = subjects.every(
+        (subject) =>
+          subject.status === SubjectStatus.APPROVED &&
+          subject.operationalState === InstitutionalOperationalState.PENDING_PROJECT_RADICATION,
+      );
+      if (!allSubjectsReady) continue;
+
+      await this.applyTransitionInManager(
+        manager,
+        semester.id,
+        { action: InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC },
+        user,
+        { bypassReadinessCheck: true },
+      );
     }
   }
 

@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Modality } from '../../common/enums/modality.enum';
+import { ProjectInstitutionalState } from '../../common/enums/project-institutional-state.enum';
 import { Priority } from '../../common/enums/priority.enum';
 import { ProjectStatus } from '../../common/enums/project-status.enum';
 import { SubjectMatterExpertStatus } from '../../common/enums/subject-matter-expert-status.enum';
@@ -85,6 +86,13 @@ export class ProjectListItemDto {
 
   @ApiProperty({ enum: ProjectStatus })
   status!: ProjectStatus;
+
+  @ApiPropertyOptional({
+    enum: ProjectInstitutionalState,
+    nullable: true,
+    description: 'Estado del workflow institucional por proyecto (radicación, cierre).',
+  })
+  institutionalState?: ProjectInstitutionalState | null;
 
   @ApiProperty()
   progress!: number;

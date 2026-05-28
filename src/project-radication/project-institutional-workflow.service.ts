@@ -1,12 +1,17 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, IsNull, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, Repository } from 'typeorm';
 import { AuditAction } from '../common/enums/audit-action.enum';
+import { InstitutionalOperationalAction } from '../common/enums/institutional-operational-action.enum';
 import { InstitutionalOperationalState } from '../common/enums/institutional-operational-state.enum';
 import { NotificationEventType } from '../common/enums/notification-event-type.enum';
 import { NotificationType } from '../common/enums/notification-type.enum';
@@ -24,14 +29,20 @@ import { AuditService } from '../audit/audit.service';
 import { addBusinessDays } from '../common/utils/business-days.util';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SemesterOperationalCheckEntity } from '../institutional-workflow/semester-operational-check.entity';
+import { SemesterOperationalTransitionEntity } from '../institutional-workflow/semester-operational-transition.entity';
 import { ProjectEntity } from '../projects/project.entity';
+import { SemesterEntity } from '../semesters/semester.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { UserEntity } from '../users/user.entity';
 import { SubjectOperationalCheckEntity } from '../institutional-workflow/subject-operational-check.entity';
 import { InstitutionalWorkflowSlaService } from '../institutional-workflow/institutional-workflow-sla.service';
+import { OPERATIONAL_CHECK_DEFINITIONS } from '../institutional-workflow/institutional-workflow.constants';
 import {
-  ProjectRadicationReadinessDto,
-} from './dto/project-radication-readiness.dto';
+  InstitutionalClosureTimelineEventDto,
+  ProjectInstitutionalClosureDto,
+} from './dto/project-institutional-closure.dto';
+import { ProjectRadicationReadinessDto } from './dto/project-radication-readiness.dto';
 import { ProjectRadicationWorkItemDto } from './dto/project-radication-work-item.dto';
 import {
   RegisterProjectRadicationDto,
@@ -40,9 +51,12 @@ import {
 import { ProjectOperationalTransitionEntity } from './project-operational-transition.entity';
 import { ProjectRadicationEntity } from './project-radication.entity';
 import { ProjectRadicationReadinessService } from './project-radication-readiness.service';
+import { SemesterOperationalWorkflowService } from '../institutional-workflow/semester-operational-workflow.service';
 
 @Injectable()
 export class ProjectInstitutionalWorkflowService {
+  private readonly logger = new Logger(ProjectInstitutionalWorkflowService.name);
+
   constructor(
     @InjectRepository(ProjectEntity)
     private readonly projectRepo: Repository<ProjectEntity>,
@@ -50,6 +64,12 @@ export class ProjectInstitutionalWorkflowService {
     private readonly radicationRepo: Repository<ProjectRadicationEntity>,
     @InjectRepository(ProjectOperationalTransitionEntity)
     private readonly transitionRepo: Repository<ProjectOperationalTransitionEntity>,
+    @InjectRepository(SemesterOperationalTransitionEntity)
+    private readonly semesterTransitionRepo: Repository<SemesterOperationalTransitionEntity>,
+    @InjectRepository(SemesterOperationalCheckEntity)
+    private readonly semesterCheckRepo: Repository<SemesterOperationalCheckEntity>,
+    @InjectRepository(SemesterEntity)
+    private readonly semesterRepo: Repository<SemesterEntity>,
     @InjectRepository(SubjectEntity)
     private readonly subjectRepo: Repository<SubjectEntity>,
     private readonly readinessService: ProjectRadicationReadinessService,
@@ -57,12 +77,218 @@ export class ProjectInstitutionalWorkflowService {
     private readonly notificationsService: NotificationsService,
     private readonly mailService: MailService,
     private readonly auditService: AuditService,
+    @Inject(forwardRef(() => SemesterOperationalWorkflowService))
+    private readonly semesterOperationalWorkflow: SemesterOperationalWorkflowService,
   ) {}
 
   async getReadiness(projectId: string, user: UserEntity): Promise<ProjectRadicationReadinessDto> {
     const project = await this.loadProject(projectId);
     this.assertCanView(project, user);
+    await this.projectRepo.manager.transaction(async (manager) => {
+      try {
+        await this.semesterOperationalWorkflow.syncSemestersWhenAllSubjectsReadyForRadication(
+          projectId,
+          manager,
+          user,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `Sync de cierre académico omitido para proyecto ${projectId}: ${message}`,
+        );
+      }
+      await this.readinessService.recalculateAndUpdateProjectState(projectId, manager, user.id);
+    });
     return this.readinessService.getReadiness(projectId);
+  }
+
+  async getInstitutionalClosure(
+    projectId: string,
+    user: UserEntity,
+  ): Promise<ProjectInstitutionalClosureDto> {
+    const project = await this.loadProject(projectId);
+    this.assertCanView(project, user);
+
+    if (!this.readinessService.usesProjectRadication(project)) {
+      throw new BadRequestException('Este proyecto no usa el flujo institucional de cierre');
+    }
+
+    const readiness = await this.readinessService.getReadiness(projectId);
+    if (readiness.projectInstitutionalState !== ProjectInstitutionalState.FINALIZED) {
+      throw new BadRequestException('La solicitud aún no está finalizada');
+    }
+
+    const semesters = await this.semesterRepo.find({
+      where: {
+        project: { id: projectId },
+        deletedAt: IsNull(),
+        createdFromChange: false,
+      },
+      order: { semesterNumber: 'ASC' },
+    });
+    const semesterIds = semesters.map((s) => s.id);
+
+    const checkRows =
+      semesterIds.length > 0
+        ? await this.semesterCheckRepo.find({
+            where: { semester: { id: In(semesterIds) } },
+            relations: { checkedBy: true, semester: true },
+          })
+        : [];
+
+    const checks = OPERATIONAL_CHECK_DEFINITIONS.map((def) => {
+      const matches = checkRows.filter((row) => row.checkKey === def.key);
+      const checkedRows = matches.filter((row) => row.status === OperationalCheckStatus.CHECKED);
+      const latest = [...checkedRows].sort(
+        (a, b) => (b.checkedAt?.getTime() ?? 0) - (a.checkedAt?.getTime() ?? 0),
+      )[0];
+
+      return {
+        key: def.key,
+        label: def.label,
+        responsibleRole: def.responsibleRole,
+        status: OperationalCheckStatus.CHECKED,
+        checkedAt: (latest?.checkedAt ?? project.radicatedAt ?? project.updatedAt).toISOString(),
+        checkedByName: latest?.checkedBy?.name ?? null,
+      };
+    });
+
+    const [semesterTransitions, projectTransitions] = await Promise.all([
+      semesterIds.length > 0
+        ? this.semesterTransitionRepo.find({
+            where: { semester: { id: In(semesterIds) } },
+            relations: { actor: true, semester: true },
+            order: { createdAt: 'ASC' },
+          })
+        : Promise.resolve([]),
+      this.transitionRepo.find({
+        where: { project: { id: projectId } },
+        relations: { actor: true },
+        order: { createdAt: 'ASC' },
+      }),
+    ]);
+
+    const rawTimeline: InstitutionalClosureTimelineEventDto[] = [
+      ...semesterTransitions.map((t) => ({
+        id: t.id,
+        action: t.action,
+        scopeLabel: `Semestre ${t.semester.semesterNumber}`,
+        actorName: t.actor.name,
+        actorRole: t.actorRole,
+        comment: t.comment,
+        returnReason: t.returnReason,
+        createdAt: t.createdAt.toISOString(),
+      })),
+      ...projectTransitions.map((t) => ({
+        id: t.id,
+        action: t.action,
+        scopeLabel: 'Radicación de solicitud',
+        actorName: t.actor.name,
+        actorRole: t.actorRole,
+        comment: t.comment,
+        returnReason: t.returnReason,
+        createdAt: t.createdAt.toISOString(),
+      })),
+    ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    const timeline = ProjectInstitutionalWorkflowService.consolidateClosureTimeline(rawTimeline);
+
+    return {
+      projectId: project.id,
+      program: project.program,
+      school: project.school,
+      projectInstitutionalState: readiness.projectInstitutionalState,
+      radicationNumber: project.radicationNumber,
+      radicatedAt: project.radicatedAt?.toISOString() ?? null,
+      scopeSubjectsApproved: readiness.scope.subjectsApproved,
+      scopeSubjectsTotal: readiness.scope.subjectsTotal,
+      scopeSemesters: readiness.scope.semesters,
+      checks,
+      timeline,
+      timelineRawCount: rawTimeline.length,
+    };
+  }
+
+  private static isSemesterScopeLabel(scopeLabel: string | null): boolean {
+    return Boolean(scopeLabel?.startsWith('Semestre'));
+  }
+
+  private static semesterSortKey(scopeLabel: string): number {
+    const match = scopeLabel.match(/Semestre\s+(\d+)/i);
+    return match ? Number(match[1]) : 0;
+  }
+
+  /** Agrupa transiciones paralelas por semestre en hitos únicos para la vista de cierre. */
+  static consolidateClosureTimeline(
+    events: InstitutionalClosureTimelineEventDto[],
+  ): InstitutionalClosureTimelineEventDto[] {
+    const projectLevel: InstitutionalClosureTimelineEventDto[] = [];
+    const semesterGroups = new Map<
+      string,
+      InstitutionalClosureTimelineEventDto & { scopeLabels: string[]; mergedCount: number }
+    >();
+
+    for (const event of events) {
+      if (!ProjectInstitutionalWorkflowService.isSemesterScopeLabel(event.scopeLabel)) {
+        projectLevel.push(event);
+        continue;
+      }
+
+      const groupKey = `${event.action}|${event.actorRole}`;
+      const existing = semesterGroups.get(groupKey);
+      const scope = event.scopeLabel!;
+
+      if (!existing) {
+        semesterGroups.set(groupKey, {
+          ...event,
+          scopeLabels: [scope],
+          mergedCount: 1,
+        });
+        continue;
+      }
+
+      existing.mergedCount += 1;
+      if (!existing.scopeLabels.includes(scope)) {
+        existing.scopeLabels.push(scope);
+      }
+      if (new Date(event.createdAt).getTime() < new Date(existing.createdAt).getTime()) {
+        existing.createdAt = event.createdAt;
+        existing.actorName = event.actorName;
+        existing.id = event.id;
+      }
+      if (event.returnReason && !existing.returnReason) {
+        existing.returnReason = event.returnReason;
+      }
+      if (event.comment && !existing.comment) {
+        existing.comment = event.comment;
+      }
+    }
+
+    const mergedSemester = [...semesterGroups.values()].map((group) => {
+      const sortedScopes = [...group.scopeLabels].sort(
+        (a, b) =>
+          ProjectInstitutionalWorkflowService.semesterSortKey(a) -
+          ProjectInstitutionalWorkflowService.semesterSortKey(b),
+      );
+      const scopeLabel =
+        sortedScopes.length > 1 ? sortedScopes.join(' · ') : sortedScopes[0] ?? null;
+
+      return {
+        id: group.id,
+        action: group.action,
+        scopeLabel,
+        actorName: group.actorName,
+        actorRole: group.actorRole,
+        comment: group.comment,
+        returnReason: group.returnReason,
+        createdAt: group.createdAt,
+        mergedCount: group.mergedCount > 1 ? group.mergedCount : undefined,
+      };
+    });
+
+    return [...projectLevel, ...mergedSemester].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
   }
 
   async registerRadication(
@@ -305,6 +531,8 @@ export class ProjectInstitutionalWorkflowService {
         }
       }
 
+      await this.finalizeScopeSemesters(projectId, user, manager, now);
+
       const projectRepo = manager.getRepository(ProjectEntity);
       await projectRepo.update(projectId, {
         institutionalState: toState,
@@ -498,6 +726,11 @@ export class ProjectInstitutionalWorkflowService {
     manager: EntityManager,
     user: UserEntity,
   ): Promise<void> {
+    await this.semesterOperationalWorkflow.syncSemestersWhenAllSubjectsReadyForRadication(
+      projectId,
+      manager,
+      user,
+    );
     await this.readinessService.recalculateAndUpdateProjectState(projectId, manager);
 
     const projectRepo = manager.getRepository(ProjectEntity);
@@ -552,6 +785,80 @@ export class ProjectInstitutionalWorkflowService {
       .andWhere('sem.createdFromChange = false')
       .andWhere('s.createdFromChange = false')
       .getMany();
+  }
+
+  private async loadScopeSemesters(projectId: string, manager: EntityManager): Promise<SemesterEntity[]> {
+    return manager
+      .getRepository(SemesterEntity)
+      .createQueryBuilder('sem')
+      .where('sem.projectId = :projectId', { projectId })
+      .andWhere('sem.deletedAt IS NULL')
+      .andWhere('sem.createdFromChange = false')
+      .getMany();
+  }
+
+  private async finalizeScopeSemesters(
+    projectId: string,
+    user: UserEntity,
+    manager: EntityManager,
+    now: Date,
+  ): Promise<void> {
+    const semesterRepo = manager.getRepository(SemesterEntity);
+    const transitionRepo = manager.getRepository(SemesterOperationalTransitionEntity);
+    const checkRepo = manager.getRepository(SemesterOperationalCheckEntity);
+    const semesters = await this.loadScopeSemesters(projectId, manager);
+
+    for (const semester of semesters) {
+      if (semester.operationalState === InstitutionalOperationalState.FINALIZED) {
+        continue;
+      }
+
+      const fromState = semester.operationalState;
+      const result = await semesterRepo.update(
+        { id: semester.id, operationalState: fromState, lockVersion: semester.lockVersion },
+        {
+          operationalState: InstitutionalOperationalState.FINALIZED,
+          operationalFinalizedAt: now,
+          operationalStageEnteredAt: now,
+          operationalStageDueAt: this.slaService.computeStageDueAt(
+            now,
+            InstitutionalOperationalState.FINALIZED,
+          ),
+          lockVersion: semester.lockVersion + 1,
+        },
+      );
+      if (!result.affected) {
+        throw new ConflictException(
+          `No se pudo finalizar el semestre ${semester.semesterNumber}. Recargue e intente de nuevo.`,
+        );
+      }
+
+      await transitionRepo.save(
+        transitionRepo.create({
+          semester: { id: semester.id },
+          fromState,
+          toState: InstitutionalOperationalState.FINALIZED,
+          action: InstitutionalOperationalAction.PLANNING_FINALIZE,
+          actor: { id: user.id },
+          actorRole: user.role,
+          comment: 'Radicación validada — cierre institucional del semestre',
+          metadata: { source: 'project_radication_validate' },
+        }),
+      );
+
+      const semesterCheck = await checkRepo.findOne({
+        where: {
+          semester: { id: semester.id },
+          checkKey: OperationalCheckKey.PLANNING_FINAL_RADICATED,
+        },
+      });
+      if (semesterCheck) {
+        semesterCheck.status = OperationalCheckStatus.CHECKED;
+        semesterCheck.checkedAt = now;
+        semesterCheck.checkedBy = { id: user.id } as UserEntity;
+        await checkRepo.save(semesterCheck);
+      }
+    }
   }
 
   private async supersedeActiveRadications(projectId: string, manager: EntityManager): Promise<void> {
@@ -616,6 +923,7 @@ export class ProjectInstitutionalWorkflowService {
 
   private assertCanView(project: ProjectEntity, user: UserEntity): void {
     if (user.role === UserRole.ADMIN || user.role === UserRole.PLANEACION) return;
+    if (user.role === UserRole.LMS || user.role === UserRole.FABRICA) return;
     if (user.role === UserRole.PRODUCT && project.productOwner?.id === user.id) return;
     throw new ForbiddenException('No tiene permisos sobre este proyecto');
   }

@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
@@ -83,8 +82,6 @@ interface ChecklistStatusContextRow {
 
 @Injectable()
 export class ChecklistService {
-  private readonly logger = new Logger(ChecklistService.name);
-
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
@@ -113,51 +110,26 @@ export class ChecklistService {
     }
 
     return await this.dataSource.transaction(async (manager) => {
-      const timings = {
-        loadItem: 0,
-        validateSubject: 0,
-        validateTransition: 0,
-        updateStatus: 0,
-        recalculateProgress: 0,
-        notifications: 0,
-        history: 0,
-        dto: 0,
-        total: 0,
-      };
-      const totalStart = Date.now();
-
-      const loadItemStart = Date.now();
       const row = await this.loadChecklistStatusContext(checklistItemId, manager);
-      timings.loadItem = Date.now() - loadItemStart;
 
       if (!row) {
         throw new NotFoundException('Checklist item not found');
       }
 
-      const validateSubjectStart = Date.now();
       this.assertCanModifyProjectContext(row, user);
       if (user.role === UserRole.PRODUCT || user.role === UserRole.ADMIN) {
         await this.assertProductAcademicChecklistAllowed(row.subjectId, manager);
       }
-      timings.validateSubject = Date.now() - validateSubjectStart;
 
       const previousStatus = row.checklistStatus;
-      const validateTransitionStart = Date.now();
       if (previousStatus !== dto.status) {
         assertChecklistStatusTransition(user.role, previousStatus, dto.status, row.ownerRole);
       }
-      timings.validateTransition = Date.now() - validateTransitionStart;
 
       if (previousStatus === dto.status) {
-        const dtoStart = Date.now();
-        const result = this.buildChecklistStatusResponse(row, previousStatus);
-        timings.dto = Date.now() - dtoStart;
-        timings.total = Date.now() - totalStart;
-        this.logStatusUpdateTiming(checklistItemId, timings);
-        return result;
+        return this.buildChecklistStatusResponse(row, previousStatus);
       }
 
-      const updateStatusStart = Date.now();
       await manager
         .createQueryBuilder()
         .update(ChecklistItemEntity)
@@ -168,9 +140,7 @@ export class ChecklistService {
         .where('id = :id', { id: checklistItemId })
         .andWhere('status != :status', { status: dto.status })
         .execute();
-      timings.updateStatus = Date.now() - updateStatusStart;
 
-      const historyStart = Date.now();
       await this.auditService.createLog(
         {
           entityType: RelatedEntityType.CHECKLIST_ITEM,
@@ -182,9 +152,7 @@ export class ChecklistService {
         },
         manager,
       );
-      timings.history = Date.now() - historyStart;
 
-      const recalculateProgressStart = Date.now();
       let subjectStatus = row.subjectStatus;
       let semesterStatus = row.semesterStatus;
       let projectStatus = row.projectStatus;
@@ -231,10 +199,8 @@ export class ChecklistService {
           manager,
         );
       }
-      timings.recalculateProgress = Date.now() - recalculateProgressStart;
 
-      const dtoStart = Date.now();
-      const result = {
+      return {
         checklistItemId: row.itemId,
         checklistStatus: dto.status,
         subjectId: row.subjectId,
@@ -246,11 +212,6 @@ export class ChecklistService {
         projectStatus,
         projectProgress,
       };
-      timings.dto = Date.now() - dtoStart;
-      timings.total = Date.now() - totalStart;
-      this.logStatusUpdateTiming(checklistItemId, timings);
-
-      return result;
     });
   }
 
@@ -263,21 +224,9 @@ export class ChecklistService {
     }
 
     return await this.dataSource.transaction(async (manager) => {
-      const timings = {
-        loadContext: 0,
-        validateState: 0,
-        loadItems: 0,
-        updateItems: 0,
-        audit: 0,
-        recalculateProgress: 0,
-        total: 0,
-      };
-      const totalStart = Date.now();
       const checklistRepo = manager.getRepository(ChecklistItemEntity);
 
-      const loadContextStart = Date.now();
       const ctx = await this.loadBulkApproveContext(dto.subjectId, manager);
-      timings.loadContext = Date.now() - loadContextStart;
 
       if (!ctx) {
         throw new NotFoundException('Subject not found');
@@ -289,7 +238,6 @@ export class ChecklistService {
         this.projectsService.assertCanManageAsProductOwner(project, user);
       }
 
-      const validateStateStart = Date.now();
       if (
         isInstitutionalWorkflowEnabled() &&
         !ctx.projectLegacyWorkflow &&
@@ -302,14 +250,9 @@ export class ChecklistService {
           'Subject must be IN_REVIEW, CHANGES_REQUESTED or SUBMITTED for bulk approval',
         );
       }
-      timings.validateState = Date.now() - validateStateStart;
 
-      const loadItemsStart = Date.now();
       const scopedItems = await this.loadScopedChecklistItemsForBulk(dto, manager);
       const toUpdate = scopedItems.filter(isEligibleForProductBulkApprove);
-      timings.loadItems = Date.now() - loadItemsStart;
-
-      const updateItemsStart = Date.now();
       const updatedItemIds = toUpdate.map((item) => item.id);
 
       if (updatedItemIds.length > 0) {
@@ -323,13 +266,11 @@ export class ChecklistService {
           .where('id IN (:...ids)', { ids: updatedItemIds })
           .execute();
       }
-      timings.updateItems = Date.now() - updateItemsStart;
 
       let subjectProgress = ctx.subjectProgress;
       let projectProgress = ctx.projectProgress;
 
       if (updatedItemIds.length > 0) {
-        const auditStart = Date.now();
         await this.auditService.createLog(
           {
             entityType: RelatedEntityType.SUBJECT,
@@ -348,9 +289,7 @@ export class ChecklistService {
           },
           manager,
         );
-        timings.audit = Date.now() - auditStart;
 
-        const recalculateStart = Date.now();
         const progress = this.isInstitutionalAcademicChecklist({
           operationalState: ctx.subjectOperationalState,
           projectLegacyWorkflow: ctx.projectLegacyWorkflow,
@@ -368,12 +307,11 @@ export class ChecklistService {
                 projectStatus: ctx.projectStatus,
               },
             );
-        timings.recalculateProgress = Date.now() - recalculateStart;
         subjectProgress = progress.subjectProgress;
         projectProgress = progress.projectProgress;
       }
 
-      const result = {
+      return {
         countUpdated: updatedItemIds.length,
         subjectId: ctx.subjectId,
         projectId: ctx.projectId,
@@ -382,23 +320,6 @@ export class ChecklistService {
         subjectProgress,
         projectProgress,
       };
-
-      timings.total = Date.now() - totalStart;
-
-      if (process.env.NODE_ENV !== 'production') {
-        this.logger.debug(
-          `bulkApproveSection(${dto.subjectId},${dto.scope}) ` +
-            `loadContext=${timings.loadContext}ms ` +
-            `validateState=${timings.validateState}ms ` +
-            `loadItems=${timings.loadItems}ms ` +
-            `updateItems=${timings.updateItems}ms ` +
-            `audit=${timings.audit}ms ` +
-            `recalculateProgress=${timings.recalculateProgress}ms ` +
-            `total=${timings.total}ms`,
-        );
-      }
-
-      return result;
     });
   }
 
@@ -482,35 +403,6 @@ export class ChecklistService {
       projectStatus: row.projectStatus,
       projectProgress: Number(row.projectProgress),
     };
-  }
-
-  private logStatusUpdateTiming(
-    checklistItemId: string,
-    timings: {
-      loadItem: number;
-      validateSubject: number;
-      validateTransition: number;
-      updateStatus: number;
-      recalculateProgress: number;
-      notifications: number;
-      history: number;
-      dto: number;
-      total: number;
-    },
-  ): void {
-    if (process.env.NODE_ENV === 'production') return;
-    this.logger.debug(
-      `statusUpdate(${checklistItemId}) ` +
-        `loadItem=${timings.loadItem}ms ` +
-        `validateSubject=${timings.validateSubject}ms ` +
-        `validateTransition=${timings.validateTransition}ms ` +
-        `updateStatus=${timings.updateStatus}ms ` +
-        `recalculateProgress=${timings.recalculateProgress}ms ` +
-        `notifications=${timings.notifications}ms ` +
-        `history=${timings.history}ms ` +
-        `dto=${timings.dto}ms ` +
-        `total=${timings.total}ms`,
-    );
   }
 
   private async loadBulkApproveContext(

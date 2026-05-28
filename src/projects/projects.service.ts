@@ -89,6 +89,7 @@ interface ProjectBaseRow {
   productOwnerId: string;
   factoryOwnerId: string | null;
   legacyWorkflow: boolean;
+  institutionalState: ProjectEntity['institutionalState'];
 }
 
 interface ProjectOwnerRow {
@@ -428,7 +429,8 @@ export class ProjectsService {
           p."updatedAt",
           p."productOwnerId",
           p."factoryOwnerId",
-          p.legacy_workflow AS "legacyWorkflow"
+          p.legacy_workflow AS "legacyWorkflow",
+          p.institutional_state AS "institutionalState"
         FROM projects p
         WHERE p.id = $1
           AND p."deletedAt" IS NULL
@@ -1234,6 +1236,7 @@ export class ProjectsService {
       requestType: input.project.requestType,
       priority: input.project.priority,
       status: input.project.status,
+      institutionalState: input.project.institutionalState ?? null,
       progress: input.project.progress,
       expectedDeliveryDate: input.project.expectedDeliveryDate,
       activatedAt: input.project.activatedAt,

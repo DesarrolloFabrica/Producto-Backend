@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../common/enums/user-role.enum';
 import { UserEntity } from '../users/user.entity';
+import { ProjectInstitutionalClosureDto } from './dto/project-institutional-closure.dto';
 import { ProjectRadicationReadinessDto } from './dto/project-radication-readiness.dto';
 import { ProjectRadicationWorkItemDto } from './dto/project-radication-work-item.dto';
 import {
@@ -20,6 +21,15 @@ import { ProjectInstitutionalWorkflowService } from './project-institutional-wor
 @Controller()
 export class ProjectRadicationController {
   constructor(private readonly workflowService: ProjectInstitutionalWorkflowService) {}
+
+  @Get('projects/:projectId/institutional-closure')
+  @Roles(UserRole.PRODUCT, UserRole.PLANEACION, UserRole.LMS, UserRole.FABRICA, UserRole.ADMIN)
+  async institutionalClosure(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<ProjectInstitutionalClosureDto> {
+    return this.workflowService.getInstitutionalClosure(projectId, user);
+  }
 
   @Get('projects/:projectId/radication-readiness')
   @Roles(UserRole.PRODUCT, UserRole.PLANEACION, UserRole.ADMIN)

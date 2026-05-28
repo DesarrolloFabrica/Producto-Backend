@@ -6,6 +6,8 @@ import { InstitutionalWorkflowModule } from '../institutional-workflow/instituti
 import { MailModule } from '../mail/mail.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ObservationsModule } from '../observations/observations.module';
+import { SemesterOperationalCheckEntity } from '../institutional-workflow/semester-operational-check.entity';
+import { SemesterOperationalTransitionEntity } from '../institutional-workflow/semester-operational-transition.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { SemesterEntity } from '../semesters/semester.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
@@ -23,6 +25,8 @@ import { ProjectRadicationReadinessService } from './project-radication-readines
       SubjectEntity,
       ProjectRadicationEntity,
       ProjectOperationalTransitionEntity,
+      SemesterOperationalTransitionEntity,
+      SemesterOperationalCheckEntity,
     ]),
     AuthModule,
     AuditModule,
