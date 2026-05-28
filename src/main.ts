@@ -45,4 +45,9 @@ async function bootstrap() {
   await app.listen(port);
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  const message = error instanceof Error ? error.stack ?? error.message : String(error);
+  // Fail fast with the real bootstrap error so Cloud Run logs show the root cause.
+  console.error(message);
+  process.exit(1);
+});

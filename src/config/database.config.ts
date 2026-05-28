@@ -31,6 +31,7 @@ export function buildDataSourceOptions(): DataSourceOptions {
     url,
     ...(ssl !== undefined ? { ssl } : {}),
     synchronize: false,
+    connectTimeoutMS: 10000,
     logging: isProd ? ['error', 'warn'] : ['error', 'warn', 'schema'],
     migrationsTableName: 'typeorm_migrations',
     migrations: ['dist/database/migrations/*.js'],
@@ -42,5 +43,7 @@ export function buildDatabaseOptions(): TypeOrmModuleOptions {
     ...buildDataSourceOptions(),
     entities: ALL_ENTITIES,
     autoLoadEntities: true,
+    retryAttempts: 1,
+    retryDelay: 1000,
   };
 }
