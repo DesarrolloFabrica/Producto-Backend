@@ -81,7 +81,28 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          npm version "${{ steps.bump.outputs.level }}" --no-git-tag-version
+
+          LEVEL="${{ steps.bump.outputs.level }}"
+          VERSION="$(node -p "require('./package.json').version")"
+          NEXT_VERSION="$(LEVEL="${LEVEL}" VERSION="${VERSION}" node -e '
+            const bump = process.env.LEVEL;
+            const [major, minor, patch] = process.env.VERSION.split(".").map(Number);
+            if (bump === "major") console.log(String(major + 1) + ".0.0");
+            else if (bump === "minor") console.log(String(major) + "." + String(minor + 1) + ".0");
+            else console.log(String(major) + "." + String(minor) + "." + String(patch + 1));
+          ')"
+          while git rev-parse "v${NEXT_VERSION}" >/dev/null 2>&1; do
+            VERSION="${NEXT_VERSION}"
+            NEXT_VERSION="$(LEVEL="${LEVEL}" VERSION="${VERSION}" node -e '
+              const bump = process.env.LEVEL;
+              const [major, minor, patch] = process.env.VERSION.split(".").map(Number);
+              if (bump === "major") console.log(String(major + 1) + ".0.0");
+              else if (bump === "minor") console.log(String(major) + "." + String(minor + 1) + ".0");
+              else console.log(String(major) + "." + String(minor) + "." + String(patch + 1));
+            ')"
+          done
+
+          npm version "${NEXT_VERSION}" --no-git-tag-version
           VERSION="$(node -p "require('./package.json').version")"
           git add package.json package-lock.json
           git commit -m "chore(release): backend v${VERSION} [skip ci]"
