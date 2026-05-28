@@ -1,0 +1,157 @@
+name: Deploy Backend to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: Version bump to apply
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: read
+
+concurrency:
+  group: backend-cloudrun-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'producto-backend' }}
+  IMAGE_NAME: producto-backend
+
+jobs:
+  deploy:
+    if: github.ref_name == 'main' && !contains(github.event.head_commit.message || '', '[skip ci]')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve version bump
+        id: bump
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === 'workflow_dispatch') {
+              core.setOutput('level', '${{ inputs.version_bump }}');
+              return;
+            }
+
+            const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+            });
+            const mergedPr = prs.data.find((pr) => pr.merged_at && pr.base.ref === 'main');
+            if (!mergedPr) {
+              core.notice('No se encontro una PR asociada al push en main; se usara patch.');
+              core.setOutput('level', 'patch');
+              return;
+            }
+
+            const labels = mergedPr.labels.map((label) => label.name.toLowerCase());
+            const hasMajor = labels.some((label) => ['major', 'semver:major', 'version:major'].includes(label));
+            const hasMinor = labels.some((label) => ['minor', 'semver:minor', 'version:minor'].includes(label));
+            const hasPatch = labels.some((label) => ['patch', 'semver:patch', 'version:patch'].includes(label));
+
+            if (hasMajor) core.setOutput('level', 'major');
+            else if (hasMinor) core.setOutput('level', 'minor');
+            else if (hasPatch) core.setOutput('level', 'patch');
+            else core.setFailed('La PR debe tener un label de version: major, minor o patch.');
+
+      - name: Bump package version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npm version "${{ steps.bump.outputs.level }}" --no-git-tag-version
+          VERSION="$(node -p "require('./package.json').version")"
+          git add package.json package-lock.json
+          git commit -m "chore(release): backend v${VERSION} [skip ci]"
+          git tag "v${VERSION}"
+          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin "v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        shell: bash
+        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}/${IMAGE_NAME}"
+          VERSION="${{ steps.version.outputs.version }}"
+          docker build \
+            --tag "${IMAGE}:${VERSION}" \
+            --tag "${IMAGE}:sha-${GITHUB_SHA::7}" \
+            --tag "${IMAGE}:latest" \
+            .
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:sha-${GITHUB_SHA::7}"
+          docker push "${IMAGE}:latest"
+          echo "image=${IMAGE}:${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy service
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > cloudrun-env.yaml <<'EOF'
+          NODE_ENV: "production"
+          JWT_EXPIRES_IN: "${{ vars.JWT_EXPIRES_IN || '1d' }}"
+          CORS_ORIGIN: "${{ vars.CORS_ORIGIN }}"
+          FRONTEND_APP_URL: "${{ vars.FRONTEND_APP_URL }}"
+          EMAIL_ENABLED: "${{ vars.EMAIL_ENABLED || 'false' }}"
+          EMAIL_TRANSPORT: "${{ vars.EMAIL_TRANSPORT || 'smtp' }}"
+          EMAIL_PORT: "${{ vars.EMAIL_PORT || '587' }}"
+          EMAIL_SECURE: "${{ vars.EMAIL_SECURE || 'false' }}"
+          EMAIL_FROM: "${{ vars.EMAIL_FROM }}"
+          PRODUCT_REQUEST_NOTIFY_EMAIL: "${{ vars.PRODUCT_REQUEST_NOTIFY_EMAIL }}"
+          INSTITUTIONAL_WORKFLOW_ENABLED: "${{ vars.INSTITUTIONAL_WORKFLOW_ENABLED || 'true' }}"
+          EOF
+
+          DEPLOY_FLAGS=(
+            "--image=${{ steps.image.outputs.image }}"
+            "--region=${{ vars.GCP_REGION }}"
+            "--project=${{ vars.GCP_PROJECT_ID }}"
+            "--platform=managed"
+            "--service-account=${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}"
+            "--allow-unauthenticated"
+            "--port=8080"
+            "--env-vars-file=cloudrun-env.yaml"
+            "--set-secrets=DATABASE_URL=DATABASE_URL:latest,JWT_SECRET=JWT_SECRET:latest"
+          )
+          if [[ -n "${{ vars.CLOUD_SQL_INSTANCE }}" ]]; then
+            DEPLOY_FLAGS+=("--add-cloudsql-instances=${{ vars.CLOUD_SQL_INSTANCE }}")
+          fi
+          if [[ "${{ vars.EMAIL_ENABLED || 'false' }}" == "true" ]]; then
+            DEPLOY_FLAGS+=("--update-secrets=EMAIL_HOST=EMAIL_HOST:latest,EMAIL_USER=EMAIL_USER:latest,EMAIL_PASSWORD=EMAIL_PASSWORD:latest")
+          fi
+          gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_FLAGS[@]}"

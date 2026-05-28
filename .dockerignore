@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+.git
+.github
+.env
+.env.*
+npm-debug.log*
+Dockerfile*
+README.md
+scripts/*.md
+scripts/*.json
+tmp-check-notifications.js
+tsconfig.build.tsbuildinfo
