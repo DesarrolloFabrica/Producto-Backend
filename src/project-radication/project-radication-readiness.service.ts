@@ -141,11 +141,12 @@ export class ProjectRadicationReadinessService {
       const stateKey = subject.operationalState;
       row.statesBreakdown[stateKey] = (row.statesBreakdown[stateKey] ?? 0) + 1;
 
-      const isReadySubject =
-        subject.operationalState === InstitutionalOperationalState.PENDING_PROJECT_RADICATION &&
-        subject.status === SubjectStatus.APPROVED;
+      const isApprovedSubject =
+        subject.operationalState === InstitutionalOperationalState.FINALIZED ||
+        (subject.operationalState === InstitutionalOperationalState.PENDING_PROJECT_RADICATION &&
+          subject.status === SubjectStatus.APPROVED);
 
-      if (isReadySubject) {
+      if (isApprovedSubject) {
         subjectsApproved += 1;
         row.approved += 1;
       } else if (subject.operationalState !== InstitutionalOperationalState.FINALIZED) {
@@ -187,6 +188,15 @@ export class ProjectRadicationReadinessService {
       blockers.length === 0;
 
     const uniqueBlockers = [...new Set(blockers)];
+
+    if (project.institutionalState === ProjectInstitutionalState.FINALIZED && scopeSubjects.length > 0) {
+      subjectsApproved = scopeSubjects.length;
+      subjectsPending = 0;
+      for (const row of bySemesterMap.values()) {
+        row.approved = row.total;
+        row.pending = 0;
+      }
+    }
 
     const canRegisterRadication =
       allReady &&
