@@ -1,6 +1,6 @@
 {
   "name": "producto-backend",
-  "version": "0.1.4",
+  "version": "1.0.0",
   "private": true,
   "license": "UNLICENSED",
   "main": "dist/main.js",

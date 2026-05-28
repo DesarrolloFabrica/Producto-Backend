@@ -74,25 +74,19 @@ jobs:
             else if (hasPatch) core.setOutput('level', 'patch');
             else core.setFailed('La PR debe tener un label de version: major, minor o patch.');
 
-      - name: Bump package version
+      - name: Resolve image version
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
+          git fetch --tags --force
           LEVEL="${{ steps.bump.outputs.level }}"
-          VERSION="$(node -p "require('./package.json').version")"
-          NEXT_VERSION="$(LEVEL="${LEVEL}" VERSION="${VERSION}" node -e '
-            const bump = process.env.LEVEL;
-            const [major, minor, patch] = process.env.VERSION.split(".").map(Number);
-            if (bump === "major") console.log(String(major + 1) + ".0.0");
-            else if (bump === "minor") console.log(String(major) + "." + String(minor + 1) + ".0");
-            else console.log(String(major) + "." + String(minor) + "." + String(patch + 1));
-          ')"
-          while git rev-parse "v${NEXT_VERSION}" >/dev/null 2>&1; do
-            VERSION="${NEXT_VERSION}"
+
+          LATEST_TAG="$(git tag -l 'v[1-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1 || true)"
+          if [[ -z "${LATEST_TAG}" ]]; then
+            NEXT_VERSION="1.0.0"
+          else
+            VERSION="${LATEST_TAG#v}"
             NEXT_VERSION="$(LEVEL="${LEVEL}" VERSION="${VERSION}" node -e '
               const bump = process.env.LEVEL;
               const [major, minor, patch] = process.env.VERSION.split(".").map(Number);
@@ -100,16 +94,9 @@ jobs:
               else if (bump === "minor") console.log(String(major) + "." + String(minor + 1) + ".0");
               else console.log(String(major) + "." + String(minor) + "." + String(patch + 1));
             ')"
-          done
+          fi
 
-          npm version "${NEXT_VERSION}" --no-git-tag-version
-          VERSION="$(node -p "require('./package.json').version")"
-          git add package.json package-lock.json
-          git commit -m "chore(release): backend v${VERSION} [skip ci]"
-          git tag "v${VERSION}"
-          git push origin HEAD:${GITHUB_REF_NAME}
-          git push origin "v${VERSION}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -176,3 +163,13 @@ jobs:
             DEPLOY_FLAGS+=("--update-secrets=EMAIL_HOST=EMAIL_HOST:latest,EMAIL_USER=EMAIL_USER:latest,EMAIL_PASSWORD=EMAIL_PASSWORD:latest")
           fi
           gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_FLAGS[@]}"
+
+      - name: Tag release
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
