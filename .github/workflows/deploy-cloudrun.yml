@@ -131,6 +131,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -z "${{ vars.DATABASE_URL }}" || -z "${{ vars.JWT_SECRET }}" ]]; then
+            echo "DATABASE_URL and JWT_SECRET GitHub variables must contain Secret Manager secret names."
+            exit 1
+          fi
+
           cat > cloudrun-env.yaml <<'EOF'
           NODE_ENV: "production"
           JWT_EXPIRES_IN: "${{ vars.JWT_EXPIRES_IN || '1d' }}"
@@ -151,8 +156,8 @@ jobs:
             "--project=${{ vars.GCP_PROJECT_ID }}"
             "--platform=managed"
             "--service-account=${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}"
-            "--allow-unauthenticated"
             "--port=8080"
+            "--timeout=300"
             "--env-vars-file=cloudrun-env.yaml"
             "--set-secrets=DATABASE_URL=${{ vars.DATABASE_URL }}:latest,JWT_SECRET=${{ vars.JWT_SECRET }}:latest"
           )
