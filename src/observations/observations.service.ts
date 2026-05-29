@@ -252,16 +252,33 @@ export class ObservationsService {
 
   async findByProject(projectId: string, user: UserEntity): Promise<ObservationResponseDto[]> {
     await this.loadProjectForView(projectId, user);
-    const observations = await this.observationRepo.find({
-      where: { project: { id: projectId } },
-      relations: {
-        author: true,
-        resolvedBy: true,
-        messages: { author: true },
-        checklistItem: true,
-      },
-      order: { createdAt: 'DESC', messages: { createdAt: 'ASC' } },
-    });
+
+    const qb = this.observationRepo
+      .createQueryBuilder('o')
+      .leftJoinAndSelect('o.author', 'author')
+      .leftJoinAndSelect('o.resolvedBy', 'resolvedBy')
+      .leftJoinAndSelect('o.messages', 'messages')
+      .leftJoinAndSelect('messages.author', 'messageAuthor')
+      .leftJoinAndSelect('o.checklistItem', 'checklistItem')
+      .where('o.projectId = :projectId', { projectId });
+
+    if (user.role === UserRole.FABRICA) {
+      qb.andWhere(
+        new Brackets((statusQb) => {
+          statusQb
+            .where('o.status != :abierta', { abierta: ObservationStatus.ABIERTA })
+            .orWhere('o.notificationStatus = :sent', {
+              sent: ObservationNotificationStatus.SENT,
+            });
+        }),
+      );
+    }
+
+    const observations = await qb
+      .orderBy('o.createdAt', 'DESC')
+      .addOrderBy('messages.createdAt', 'ASC')
+      .getMany();
+
     return observations.map((o) => {
       const dto = this.toObservationResponse(o);
       dto.projectId = projectId;

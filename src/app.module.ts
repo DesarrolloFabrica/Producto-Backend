@@ -15,6 +15,7 @@ import { InstitutionalWorkflowModule } from './institutional-workflow/institutio
 import { ProjectRadicationModule } from './project-radication/project-radication.module';
 import { PlanningDashboardModule } from './planning-dashboard/planning-dashboard.module';
 import { LmsDashboardModule } from './lms-dashboard/lms-dashboard.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { LmsDashboardModule } from './lms-dashboard/lms-dashboard.module';
           ProjectRadicationModule,
           PlanningDashboardModule,
           LmsDashboardModule,
+          AuditModule,
         ]
       : []),
   ],

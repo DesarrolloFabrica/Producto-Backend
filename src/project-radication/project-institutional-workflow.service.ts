@@ -296,7 +296,7 @@ export class ProjectInstitutionalWorkflowService {
     dto: RegisterProjectRadicationDto,
     user: UserEntity,
   ): Promise<ProjectRadicationReadinessDto> {
-    if (user.role !== UserRole.PRODUCT && user.role !== UserRole.ADMIN) {
+    if (user.role !== UserRole.PRODUCT) {
       throw new ForbiddenException('Solo Product puede registrar radicados');
     }
 
@@ -398,7 +398,7 @@ export class ProjectInstitutionalWorkflowService {
     dto: RegisterProjectRadicationDto,
     user: UserEntity,
   ): Promise<ProjectRadicationReadinessDto> {
-    if (user.role !== UserRole.PRODUCT && user.role !== UserRole.ADMIN) {
+    if (user.role !== UserRole.PRODUCT) {
       throw new ForbiddenException('Solo Product puede reenviar radicados');
     }
 
@@ -471,7 +471,7 @@ export class ProjectInstitutionalWorkflowService {
   }
 
   async validateRadication(projectId: string, user: UserEntity): Promise<ProjectRadicationReadinessDto> {
-    if (user.role !== UserRole.PLANEACION && user.role !== UserRole.ADMIN) {
+    if (user.role !== UserRole.PLANEACION) {
       throw new ForbiddenException('Solo Planeación puede validar radicados');
     }
 
@@ -610,7 +610,7 @@ export class ProjectInstitutionalWorkflowService {
     dto: ReturnProjectRadicationDto,
     user: UserEntity,
   ): Promise<ProjectRadicationReadinessDto> {
-    if (user.role !== UserRole.PLANEACION && user.role !== UserRole.ADMIN) {
+    if (user.role !== UserRole.PLANEACION) {
       throw new ForbiddenException('Solo Planeación puede devolver radicados');
     }
 
@@ -696,7 +696,7 @@ export class ProjectInstitutionalWorkflowService {
   }
 
   async listPlanningRadicationWork(user: UserEntity): Promise<ProjectRadicationWorkItemDto[]> {
-    if (user.role !== UserRole.PLANEACION && user.role !== UserRole.ADMIN) {
+    if (user.role !== UserRole.PLANEACION) {
       throw new ForbiddenException();
     }
 

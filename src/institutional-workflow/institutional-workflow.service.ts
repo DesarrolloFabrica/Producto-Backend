@@ -179,11 +179,12 @@ export class InstitutionalWorkflowService {
     this.assertTransitionOwnership(subject, user);
     this.assertNoSubjectSemesterScopedTransition(subject, dto.action);
 
-    if (user.role !== UserRole.ADMIN) {
-      const allowed = allowedActionsForRole(user.role, subject.operationalState);
-      if (!allowed.includes(dto.action)) {
-        throw new ForbiddenException('Acción no permitida para su rol en este estado');
-      }
+    if (user.role === UserRole.ADMIN) {
+      throw new ForbiddenException('El rol ADMIN no puede ejecutar transiciones operacionales');
+    }
+    const allowed = allowedActionsForRole(user.role, subject.operationalState);
+    if (!allowed.includes(dto.action)) {
+      throw new ForbiddenException('Acción no permitida para su rol en este estado');
     }
 
     if (isReturnAction(dto.action)) {

@@ -35,7 +35,6 @@ export class InstitutionalWorkflowController {
     UserRole.FABRICA,
     UserRole.PLANEACION,
     UserRole.LMS,
-    UserRole.ADMIN,
   )
   async transition(
     @Param('subjectId') subjectId: string,
@@ -66,7 +65,6 @@ export class InstitutionalWorkflowController {
     UserRole.FABRICA,
     UserRole.PLANEACION,
     UserRole.LMS,
-    UserRole.ADMIN,
   )
   async semesterTransition(
     @Param('semesterId') semesterId: string,

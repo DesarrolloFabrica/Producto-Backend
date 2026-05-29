@@ -93,6 +93,9 @@ export class NotificationsService {
 
 
   private recipientFilter(user: UserEntity) {
+    if (user.role === UserRole.ADMIN) {
+      return new Brackets((qb) => qb.where('1 = 1'));
+    }
 
     return new Brackets((qb) => {
 
@@ -634,11 +637,13 @@ export class NotificationsService {
 
   ): Promise<NotificationInboxResponseDto> {
 
-    await this.resolveObsoleteNotifications(user);
+    if (user.role !== UserRole.ADMIN) {
+      await this.resolveObsoleteNotifications(user);
 
-    await this.autoArchiveStale(user);
+      await this.autoArchiveStale(user);
 
-    await this.autoArchiveReadInformative(user);
+      await this.autoArchiveReadInformative(user);
+    }
 
 
 
@@ -708,7 +713,9 @@ export class NotificationsService {
 
   async getSummary(user: UserEntity): Promise<NotificationSummaryDto> {
 
-    await this.resolveObsoleteNotifications(user);
+    if (user.role !== UserRole.ADMIN) {
+      await this.resolveObsoleteNotifications(user);
+    }
 
     const actionableCount = await this.notificationRepo
 

@@ -41,7 +41,7 @@ export class ProjectRadicationController {
   }
 
   @Post('projects/:projectId/radication')
-  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  @Roles(UserRole.PRODUCT)
   async register(
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Body() dto: RegisterProjectRadicationDto,
@@ -51,7 +51,7 @@ export class ProjectRadicationController {
   }
 
   @Post('projects/:projectId/radication/resubmit')
-  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  @Roles(UserRole.PRODUCT)
   async resubmit(
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Body() dto: RegisterProjectRadicationDto,
@@ -61,7 +61,7 @@ export class ProjectRadicationController {
   }
 
   @Post('projects/:projectId/radication/validate')
-  @Roles(UserRole.PLANEACION, UserRole.ADMIN)
+  @Roles(UserRole.PLANEACION)
   async validate(
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @CurrentUser() user: UserEntity,
@@ -70,7 +70,7 @@ export class ProjectRadicationController {
   }
 
   @Post('projects/:projectId/radication/return')
-  @Roles(UserRole.PLANEACION, UserRole.ADMIN)
+  @Roles(UserRole.PLANEACION)
   async returnRadication(
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Body() dto: ReturnProjectRadicationDto,
@@ -80,13 +80,13 @@ export class ProjectRadicationController {
   }
 
   @Get('product/radication-work')
-  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  @Roles(UserRole.PRODUCT)
   async productWork(@CurrentUser() user: UserEntity): Promise<ProjectRadicationWorkItemDto[]> {
     return this.workflowService.listProductRadicationWork(user);
   }
 
   @Get('planning/radication-work')
-  @Roles(UserRole.PLANEACION, UserRole.ADMIN)
+  @Roles(UserRole.PLANEACION)
   async planningWork(@CurrentUser() user: UserEntity): Promise<ProjectRadicationWorkItemDto[]> {
     return this.workflowService.listPlanningRadicationWork(user);
   }

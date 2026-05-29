@@ -219,10 +219,11 @@ export class SemesterOperationalWorkflowService {
   ): Promise<SemesterOperationalWorkspaceDto> {
     const semester = await this.loadSemester(semesterId);
     this.assertAccess(semester, user);
-    if (user.role !== UserRole.ADMIN) {
-      const allowed = allowedActionsForRole(user.role, semester.operationalState);
-      if (!allowed.includes(dto.action)) throw new ForbiddenException('Accion no permitida para su rol en este estado');
+    if (user.role === UserRole.ADMIN) {
+      throw new ForbiddenException('El rol ADMIN no puede ejecutar transiciones operacionales');
     }
+    const allowed = allowedActionsForRole(user.role, semester.operationalState);
+    if (!allowed.includes(dto.action)) throw new ForbiddenException('Accion no permitida para su rol en este estado');
     if (isReturnAction(dto.action) && (dto.returnReason ?? dto.comment ?? '').trim().length < 10) {
       throw new BadRequestException('Debe indicar un motivo de devolucion (minimo 10 caracteres)');
     }
@@ -369,12 +370,7 @@ export class SemesterOperationalWorkflowService {
     ]);
     const readiness = await this.computeReadiness(semester, null, user);
     const availableActions = user.role === UserRole.ADMIN
-      ? [
-          ...allowedActionsForRole(UserRole.PLANEACION, semester.operationalState),
-          ...allowedActionsForRole(UserRole.FABRICA, semester.operationalState),
-          ...allowedActionsForRole(UserRole.LMS, semester.operationalState),
-          ...allowedActionsForRole(UserRole.PRODUCT, semester.operationalState),
-        ]
+      ? []
       : allowedActionsForRole(user.role, semester.operationalState);
     const filteredActions = [...new Set(availableActions)].filter((a) => {
       if (
@@ -928,13 +924,17 @@ export class SemesterOperationalWorkflowService {
   }
 
   private async countOpenObservations(semesterId: string): Promise<number> {
-    return this.subjectRepo.manager.query(
-      `SELECT COUNT(o.id)::int AS count
+    return this.subjectRepo.manager
+      .query(
+        `SELECT COUNT(o.id)::int AS count
        FROM observations o
        INNER JOIN subjects s ON s.id = o."subjectId"
-       WHERE s."semesterId" = $1 AND o.status != 'RESUELTA'`,
-      [semesterId],
-    ).then((rows: { count: number }[]) => Number(rows[0]?.count ?? 0));
+       WHERE s."semesterId" = $1
+         AND o.status != 'RESUELTA'
+         AND (o.status != 'ABIERTA' OR o."notificationStatus" = 'SENT')`,
+        [semesterId],
+      )
+      .then((rows: { count: number }[]) => Number(rows[0]?.count ?? 0));
   }
 
   private async countFactoryProductionReadySubjects(semesterId: string): Promise<number> {

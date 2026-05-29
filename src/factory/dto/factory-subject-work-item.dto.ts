@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { InstitutionalOperationalState } from '../../common/enums/institutional-operational-state.enum';
 import { Priority } from '../../common/enums/priority.enum';
 import { SubjectOperationalState } from '../../common/enums/subject-operational-state.enum';
+import { UserRole } from '../../common/enums/user-role.enum';
 
 export class FactorySubjectWorkItemDto {
   @ApiProperty({ format: 'uuid' })
@@ -32,6 +34,12 @@ export class FactorySubjectWorkItemDto {
 
   @ApiProperty({ enum: SubjectOperationalState })
   operationalState!: SubjectOperationalState;
+
+  @ApiProperty({ enum: InstitutionalOperationalState })
+  institutionalOperationalState!: InstitutionalOperationalState;
+
+  @ApiProperty({ enum: UserRole })
+  currentResponsibleRole!: UserRole;
 
   @ApiProperty()
   openObservationsCount!: number;

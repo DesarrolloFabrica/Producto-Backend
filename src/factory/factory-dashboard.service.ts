@@ -12,7 +12,10 @@ import { SemesterEntity } from '../semesters/semester.entity';
 import { SubjectsService } from '../subjects/subjects.service';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { UserEntity } from '../users/user.entity';
-import { statesPendingForRole } from '../institutional-workflow/institutional-workflow.transitions';
+import {
+  responsibleRoleForState,
+  statesPendingForRole,
+} from '../institutional-workflow/institutional-workflow.transitions';
 import {
   FactoryDashboardCountsDto,
   FactoryDashboardSummaryDto,
@@ -97,7 +100,9 @@ export class FactoryDashboardService {
       `
       SELECT
         s."semesterId" AS "semesterId",
-        COUNT(o.id) FILTER (WHERE o.status = 'ABIERTA')::int AS open,
+        COUNT(o.id) FILTER (
+          WHERE o.status = 'ABIERTA' AND o."notificationStatus" = 'SENT'
+        )::int AS open,
         COUNT(o.id) FILTER (WHERE o.status = 'EN_CORRECCION')::int AS "correctionSent"
       FROM subjects s
       LEFT JOIN observations o ON o."subjectId" = s.id AND o.role = 'PRODUCT'
@@ -199,7 +204,8 @@ export class FactoryDashboardService {
     row: SemesterRow,
     obs: { open: number; correctionSent: number },
   ): FactorySubjectWorkItemDto {
-    const operationalState = this.mapSemesterState(row.semesterOperationalState);
+    const institutionalOperationalState = row.semesterOperationalState;
+    const operationalState = this.mapSemesterState(institutionalOperationalState);
     const subjectsTotal = Number(row.subjectsTotal ?? 0);
     const subjectsReady = Number(row.subjectsReady ?? 0);
     return {
@@ -217,6 +223,8 @@ export class FactoryDashboardService {
         row.projectExpectedDeliveryDate,
       priority: row.priority,
       operationalState,
+      institutionalOperationalState,
+      currentResponsibleRole: responsibleRoleForState(institutionalOperationalState),
       openObservationsCount: obs.open,
       correctionSentCount: obs.correctionSent,
       lastActivity: row.subjectsUpdatedAt,
