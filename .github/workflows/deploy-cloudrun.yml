@@ -161,6 +161,15 @@ jobs:
           PLANNING_RADICATION_CHECK_BUSINESS_DAYS: "${{ vars.PLANNING_RADICATION_CHECK_BUSINESS_DAYS || '3' }}"
           EOF
 
+          SECRETS_ARG="DATABASE_URL=${{ vars.DATABASE_URL }}:latest,JWT_SECRET=${{ vars.JWT_SECRET }}:latest"
+          if [[ "${{ vars.EMAIL_ENABLED || 'false' }}" == "true" ]]; then
+            if [[ -z "${{ vars.EMAIL_HOST }}" || -z "${{ vars.EMAIL_USER }}" || -z "${{ vars.EMAIL_PASSWORD }}" ]]; then
+              echo "EMAIL_HOST, EMAIL_USER and EMAIL_PASSWORD GitHub variables must contain Secret Manager secret names when EMAIL_ENABLED=true."
+              exit 1
+            fi
+            SECRETS_ARG="${SECRETS_ARG},EMAIL_HOST=${{ vars.EMAIL_HOST }}:latest,EMAIL_USER=${{ vars.EMAIL_USER }}:latest,EMAIL_PASSWORD=${{ vars.EMAIL_PASSWORD }}:latest"
+          fi
+
           DEPLOY_FLAGS=(
             "--image=${{ steps.image.outputs.image }}"
             "--region=${{ vars.GCP_REGION }}"
@@ -170,17 +179,10 @@ jobs:
             "--port=8080"
             "--timeout=300"
             "--env-vars-file=cloudrun-env.yaml"
-            "--set-secrets=DATABASE_URL=${{ vars.DATABASE_URL }}:latest,JWT_SECRET=${{ vars.JWT_SECRET }}:latest"
+            "--set-secrets=${SECRETS_ARG}"
           )
           if [[ -n "${{ vars.CLOUD_SQL_INSTANCE }}" ]]; then
             DEPLOY_FLAGS+=("--add-cloudsql-instances=${{ vars.CLOUD_SQL_INSTANCE }}")
-          fi
-          if [[ "${{ vars.EMAIL_ENABLED || 'false' }}" == "true" ]]; then
-            if [[ -z "${{ vars.EMAIL_HOST }}" || -z "${{ vars.EMAIL_USER }}" || -z "${{ vars.EMAIL_PASSWORD }}" ]]; then
-              echo "EMAIL_HOST, EMAIL_USER and EMAIL_PASSWORD GitHub variables must contain Secret Manager secret names when EMAIL_ENABLED=true."
-              exit 1
-            fi
-            DEPLOY_FLAGS+=("--update-secrets=EMAIL_HOST=${{ vars.EMAIL_HOST }}:latest,EMAIL_USER=${{ vars.EMAIL_USER }}:latest,EMAIL_PASSWORD=${{ vars.EMAIL_PASSWORD }}:latest")
           fi
           gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_FLAGS[@]}"
 
