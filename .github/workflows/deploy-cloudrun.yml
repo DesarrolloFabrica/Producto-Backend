@@ -141,13 +141,24 @@ jobs:
           JWT_EXPIRES_IN: "${{ vars.JWT_EXPIRES_IN || '1d' }}"
           CORS_ORIGIN: "${{ vars.CORS_ORIGIN }}"
           FRONTEND_APP_URL: "${{ vars.FRONTEND_APP_URL }}"
+          APP_PUBLIC_URL: "${{ vars.APP_PUBLIC_URL || vars.FRONTEND_APP_URL }}"
+          GOOGLE_AUTH_ENABLED: "${{ vars.GOOGLE_AUTH_ENABLED || 'false' }}"
+          GOOGLE_OAUTH_CLIENT_ID: "${{ vars.GOOGLE_OAUTH_CLIENT_ID }}"
+          AUTH_EMAIL_PASSWORD_ENABLED: "${{ vars.AUTH_EMAIL_PASSWORD_ENABLED || 'false' }}"
+          AUTH_DEV_EMAIL_LOGIN_ENABLED: "${{ vars.AUTH_DEV_EMAIL_LOGIN_ENABLED || 'false' }}"
           EMAIL_ENABLED: "${{ vars.EMAIL_ENABLED || 'false' }}"
-          EMAIL_TRANSPORT: "${{ vars.EMAIL_TRANSPORT || 'smtp' }}"
-          EMAIL_PORT: "${{ vars.EMAIL_PORT || '587' }}"
-          EMAIL_SECURE: "${{ vars.EMAIL_SECURE || 'false' }}"
-          EMAIL_FROM: "${{ vars.EMAIL_FROM }}"
-          PRODUCT_REQUEST_NOTIFY_EMAIL: "${{ vars.PRODUCT_REQUEST_NOTIFY_EMAIL }}"
+          EMAIL_PROVIDER: "${{ vars.EMAIL_PROVIDER || 'smtp' }}"
+          EMAIL_TEST_MODE: "${{ vars.EMAIL_TEST_MODE || 'false' }}"
+          EMAIL_FROM_NAME: "${{ vars.EMAIL_FROM_NAME || 'Operación Académica CUN' }}"
+          EMAIL_FROM_ADDRESS: "${{ vars.EMAIL_FROM_ADDRESS }}"
+          EMAIL_ALLOWED_DOMAIN: "${{ vars.EMAIL_ALLOWED_DOMAIN || 'cun.edu.co' }}"
+          EMAIL_BLOCK_LOCAL_RECIPIENTS: "${{ vars.EMAIL_BLOCK_LOCAL_RECIPIENTS || 'true' }}"
+          SMTP_PORT: "${{ vars.SMTP_PORT || '465' }}"
+          SMTP_SECURE: "${{ vars.SMTP_SECURE || 'true' }}"
           INSTITUTIONAL_WORKFLOW_ENABLED: "${{ vars.INSTITUTIONAL_WORKFLOW_ENABLED || 'true' }}"
+          PRODUCT_ACADEMIC_REVIEW_BUSINESS_DAYS: "${{ vars.PRODUCT_ACADEMIC_REVIEW_BUSINESS_DAYS || '5' }}"
+          PRODUCT_RADICATION_BUSINESS_DAYS: "${{ vars.PRODUCT_RADICATION_BUSINESS_DAYS || '5' }}"
+          PLANNING_RADICATION_CHECK_BUSINESS_DAYS: "${{ vars.PLANNING_RADICATION_CHECK_BUSINESS_DAYS || '3' }}"
           EOF
 
           DEPLOY_FLAGS=(
@@ -165,7 +176,11 @@ jobs:
             DEPLOY_FLAGS+=("--add-cloudsql-instances=${{ vars.CLOUD_SQL_INSTANCE }}")
           fi
           if [[ "${{ vars.EMAIL_ENABLED || 'false' }}" == "true" ]]; then
-            DEPLOY_FLAGS+=("--update-secrets=EMAIL_HOST=EMAIL_HOST:latest,EMAIL_USER=EMAIL_USER:latest,EMAIL_PASSWORD=EMAIL_PASSWORD:latest")
+            if [[ -z "${{ vars.EMAIL_HOST }}" || -z "${{ vars.EMAIL_USER }}" || -z "${{ vars.EMAIL_PASSWORD }}" ]]; then
+              echo "EMAIL_HOST, EMAIL_USER and EMAIL_PASSWORD GitHub variables must contain Secret Manager secret names when EMAIL_ENABLED=true."
+              exit 1
+            fi
+            DEPLOY_FLAGS+=("--update-secrets=EMAIL_HOST=${{ vars.EMAIL_HOST }}:latest,EMAIL_USER=${{ vars.EMAIL_USER }}:latest,EMAIL_PASSWORD=${{ vars.EMAIL_PASSWORD }}:latest")
           fi
           gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_FLAGS[@]}"
 
