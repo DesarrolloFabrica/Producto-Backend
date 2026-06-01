@@ -14,7 +14,13 @@
     "typeorm": "node --require ts-node/register --require tsconfig-paths/register ./node_modules/typeorm/cli.js",
     "migration:run": "npm run build && npm run typeorm -- -d dist/database/data-source.js migration:run",
     "migration:revert": "npm run build && npm run typeorm -- -d dist/database/data-source.js migration:revert",
-    "seed": "npm run build && node dist/database/seeds/seed.js"
+    "seed": "npm run build && node dist/database/seeds/seed.js",
+    "qa:email": "node scripts/qa-email-notifications.mjs",
+    "qa:email:real-dry-run": "node scripts/qa-email-real-dry-run.mjs",
+    "db:deactivate-local-users": "node scripts/deactivate-local-seed-users.mjs",
+    "qa:email:product-request": "node scripts/qa-email-product-request-created.mjs",
+    "check:email-config": "node scripts/check-email-config.mjs",
+    "check:email-config:verify": "node scripts/check-email-config.mjs --verify"
   },
   "keywords": [],
   "author": "",
@@ -32,6 +38,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "dotenv": "^17.4.2",
+    "google-auth-library": "^10.6.2",
     "nodemailer": "^8.0.7",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",

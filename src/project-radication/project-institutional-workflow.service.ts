@@ -27,7 +27,6 @@ import { SubjectStatus } from '../common/enums/subject-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { AuditService } from '../audit/audit.service';
 import { addBusinessDays } from '../common/utils/business-days.util';
-import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SemesterOperationalCheckEntity } from '../institutional-workflow/semester-operational-check.entity';
 import { SemesterOperationalTransitionEntity } from '../institutional-workflow/semester-operational-transition.entity';
@@ -75,7 +74,6 @@ export class ProjectInstitutionalWorkflowService {
     private readonly readinessService: ProjectRadicationReadinessService,
     private readonly slaService: InstitutionalWorkflowSlaService,
     private readonly notificationsService: NotificationsService,
-    private readonly mailService: MailService,
     private readonly auditService: AuditService,
     @Inject(forwardRef(() => SemesterOperationalWorkflowService))
     private readonly semesterOperationalWorkflow: SemesterOperationalWorkflowService,

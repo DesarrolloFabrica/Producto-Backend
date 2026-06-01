@@ -1,217 +1,314 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as nodemailer from 'nodemailer';
-import type { Transporter } from 'nodemailer';
-import { InstitutionalOperationalAction } from '../common/enums/institutional-operational-action.enum';
-import type { ObservationEntity } from '../observations/observation.entity';
-import { ProjectDetailDto } from '../projects/dto/project-response.dto';
-import { SubjectEntity } from '../subjects/subject.entity';
-import {
-  buildFactoryCorrectionsBatchEmail,
-  buildProductObservationsBatchEmail,
-} from './templates/observation-batch.template';
-import { buildProductRequestCreatedEmail } from './templates/product-request-created.template';
-import { buildProductRequestUpdatedEmail, type ProductRequestChangeSummary } from './templates/product-request-updated.template';
 
-export interface SendMailOptions {
-  to: string;
-  subject: string;
-  html: string;
-  text?: string;
-}
+import { InjectRepository } from '@nestjs/typeorm';
+
+import { Repository } from 'typeorm';
+
+import { UserRole } from '../common/enums/user-role.enum';
+
+import type { ObservationEntity } from '../observations/observation.entity';
+
+import { ProjectDetailDto } from '../projects/dto/project-response.dto';
+
+import { SubjectEntity } from '../subjects/subject.entity';
+
+import { UserEntity } from '../users/user.entity';
+
+import { EmailService, SendMailOptions } from '../email/email.service';
+
+import { resolvePrimaryInstitutionalRecipient } from '../email/recipient-resolver';
+
+import {
+
+  buildFactoryCorrectionsBatchEmail,
+
+  buildProductObservationsBatchEmail,
+
+} from './templates/observation-batch.template';
+
+import { buildProductRequestCreatedEmail } from './templates/product-request-created.template';
+
+import {
+
+  buildProductRequestUpdatedEmail,
+
+  type ProductRequestChangeSummary,
+
+} from './templates/product-request-updated.template';
+
+
+
+export type { SendMailOptions };
+
+/** Destinatario lógico de nueva solicitud (fase actual; luego por rol/flujo). */
+const PRODUCT_REQUEST_CREATED_RECIPIENT = 'desarrollofabrica@cun.edu.co';
 
 @Injectable()
+
 export class MailService {
+
   private readonly logger = new Logger(MailService.name);
-  private transporter: Transporter | null = null;
 
-  private isEmailEnabled(): boolean {
-    return (process.env.EMAIL_ENABLED ?? 'false').toLowerCase() === 'true';
-  }
 
-  private getTransportMode(): 'log' | 'smtp' {
-    const mode = (process.env.EMAIL_TRANSPORT ?? 'smtp').toLowerCase();
-    return mode === 'log' ? 'log' : 'smtp';
-  }
 
-  private getNotifyEmail(): string | null {
-    const email = (process.env.PRODUCT_REQUEST_NOTIFY_EMAIL ?? '').trim();
-    return email || null;
-  }
+  constructor(
 
-  private resolveRecipient(primary?: string | null): string | null {
-    const direct = primary?.trim();
-    if (direct) return direct;
-    return this.getNotifyEmail();
-  }
+    private readonly emailService: EmailService,
 
-  private isSmtpConfigured(): boolean {
-    const host = (process.env.EMAIL_HOST ?? '').trim();
-    const user = (process.env.EMAIL_USER ?? '').trim();
-    const password = (process.env.EMAIL_PASSWORD ?? '').trim();
-    return Boolean(host && user && password);
-  }
+    @InjectRepository(UserEntity)
 
-  private getFromAddress(): string {
-    return process.env.EMAIL_FROM?.trim() || 'Producto CUN <no-reply@cun.edu.co>';
-  }
+    private readonly userRepo: Repository<UserEntity>,
 
-  private getTransporter(): Transporter | null {
-    if (this.transporter) return this.transporter;
+  ) {}
 
-    if (!this.isSmtpConfigured()) {
-      return null;
-    }
 
-    const port = Number(process.env.EMAIL_PORT ?? 587);
-    const secure = (process.env.EMAIL_SECURE ?? 'false').toLowerCase() === 'true';
-
-    this.transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: Number.isFinite(port) ? port : 587,
-      secure,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD,
-      },
-    });
-
-    return this.transporter;
-  }
 
   async sendMail(options: SendMailOptions): Promise<void> {
-    if (!this.isEmailEnabled()) {
-      return;
-    }
 
-    const { to, subject, html, text } = options;
+    await this.emailService.sendMail(options);
 
-    if (this.getTransportMode() === 'log') {
-      const preview = (text ?? html.replace(/<[^>]+>/g, ' '))
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 400);
-      this.logger.log(
-        `[EMAIL log] to=${to} | subject=${subject} | preview=${preview}${preview.length >= 400 ? '…' : ''}`,
-      );
-      return;
-    }
-
-    if (!this.isSmtpConfigured()) {
-      this.logger.warn(
-        'EMAIL_ENABLED=true pero SMTP incompleto (EMAIL_HOST, EMAIL_USER o EMAIL_PASSWORD). Correo no enviado.',
-      );
-      return;
-    }
-
-    const transporter = this.getTransporter();
-    if (!transporter) {
-      this.logger.warn('No se pudo inicializar el transporte SMTP. Correo no enviado.');
-      return;
-    }
-
-    try {
-      await transporter.sendMail({
-        from: this.getFromAddress(),
-        to,
-        subject,
-        html,
-        text: text ?? html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
-      });
-      this.logger.log(`Correo enviado a ${to} — asunto: ${subject}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Error al enviar correo: ${message}`);
-    }
   }
+
+
+
+  private async resolveInstitutionalRecipient(params: {
+
+    primary?: string | null;
+
+    roleFallback: UserRole;
+
+    eventType: string;
+
+    projectId?: string;
+
+    subjectLine: string;
+
+  }): Promise<string | null> {
+
+    const to = await resolvePrimaryInstitutionalRecipient({
+
+      primary: params.primary,
+
+      roleFallback: params.roleFallback,
+
+      userRepo: this.userRepo,
+
+    });
+
+
+
+    if (!to) {
+
+      this.logger.warn(
+
+        `Sin destinatario institucional para ${params.eventType} (rol ${params.roleFallback})`,
+
+      );
+
+      await this.emailService.recordSkippedDelivery({
+
+        originalRecipient: `role:${params.roleFallback}:${params.eventType}`,
+
+        subject: params.subjectLine,
+
+        eventType: params.eventType,
+
+        reason: 'Sin destinatario institucional válido',
+
+        metadata: { projectId: params.projectId, eventType: params.eventType },
+
+      });
+
+      return null;
+
+    }
+
+
+
+    return to;
+
+  }
+
+
 
   async sendProductRequestCreatedEmail(project: ProjectDetailDto): Promise<void> {
-    if (!this.isEmailEnabled()) return;
-
-    const to = this.getNotifyEmail();
-    if (!to) {
-      this.logger.warn('PRODUCT_REQUEST_NOTIFY_EMAIL no configurado. Correo de nueva solicitud omitido.');
-      return;
-    }
+    if (!this.emailService.isEmailEnabled()) return;
 
     const { subject, html, text } = buildProductRequestCreatedEmail(project);
-    await this.sendMail({ to, subject, html, text });
-  }
 
-  async sendProductRequestUpdatedEmail(
-    project: ProjectDetailDto,
-    changeSummary: ProductRequestChangeSummary,
-  ): Promise<void> {
-    if (!this.isEmailEnabled()) return;
-
-    const to = this.getNotifyEmail();
-    if (!to) {
-      this.logger.warn('PRODUCT_REQUEST_NOTIFY_EMAIL no configurado. Correo de modificación omitido.');
-      return;
-    }
-
-    const { subject, html, text } = buildProductRequestUpdatedEmail(project, changeSummary);
-    await this.sendMail({ to, subject, html, text });
-  }
-
-  async sendProductObservationsBatchEmail(params: {
-    subject: SubjectEntity;
-    observations: ObservationEntity[];
-    batchId: string;
-  }): Promise<void> {
-    if (!this.isEmailEnabled()) return;
-
-    const to = this.resolveRecipient(params.subject.project?.factoryOwner?.email);
-    if (!to) {
-      this.logger.warn('Sin destinatario para correo de observaciones a Fábrica.');
-      return;
-    }
-
-    const { subject, html, text } = buildProductObservationsBatchEmail(params);
-    await this.sendMail({ to, subject, html, text });
-  }
-
-  async sendFactoryCorrectionsBatchEmail(params: {
-    subject: SubjectEntity;
-    observations: ObservationEntity[];
-    batchId: string;
-  }): Promise<void> {
-    if (!this.isEmailEnabled()) return;
-
-    const to = this.resolveRecipient(params.subject.project?.productOwner?.email);
-    if (!to) {
-      this.logger.warn('Sin destinatario para correo de correcciones a Product.');
-      return;
-    }
-
-    const { subject, html, text } = buildFactoryCorrectionsBatchEmail(params);
-    await this.sendMail({ to, subject, html, text });
-  }
-
-  async sendInstitutionalTransitionEmail(params: {
-    subject: SubjectEntity;
-    action: InstitutionalOperationalAction;
-    reason?: string | null;
-  }): Promise<void> {
-    if (!this.isEmailEnabled()) return;
-
-    const to = this.getNotifyEmail();
-    if (!to) return;
-
-    const { subject, action, reason } = params;
-    const project = subject.project;
-    const title = `Workflow: ${subject.name}`;
-    const body = [
-      `<p><strong>Asignatura:</strong> ${subject.name}</p>`,
-      `<p><strong>Programa:</strong> ${project?.program ?? '—'}</p>`,
-      `<p><strong>Acción:</strong> ${action}</p>`,
-      `<p><strong>Estado operacional:</strong> ${subject.operationalState}</p>`,
-      reason ? `<p><strong>Motivo:</strong> ${reason}</p>` : '',
-    ].join('');
     await this.sendMail({
-      to,
-      subject: title,
-      html: `<html><body>${body}</body></html>`,
-      text: `${title} — ${action}`,
+      to: PRODUCT_REQUEST_CREATED_RECIPIENT,
+      subject,
+      html,
+      text,
+      metadata: {
+        eventType: 'PRODUCT_REQUEST_CREATED',
+        projectId: project.id,
+        createdByName: project.productOwner?.name ?? null,
+        createdByEmail: project.productOwner?.email ?? null,
+        emailIncludesCreatedBy: html.includes('Creado por'),
+      },
     });
   }
+
+
+
+  async sendProductRequestUpdatedEmail(
+
+    project: ProjectDetailDto,
+
+    changeSummary: ProductRequestChangeSummary,
+
+  ): Promise<void> {
+
+    if (!this.emailService.isEmailEnabled()) return;
+
+
+
+    const { subject, html, text } = buildProductRequestUpdatedEmail(project, changeSummary);
+
+    const to = await this.resolveInstitutionalRecipient({
+
+      primary: project.factoryOwner?.email,
+
+      roleFallback: UserRole.PLANEACION,
+
+      eventType: 'PROJECT_MODIFIED',
+
+      projectId: project.id,
+
+      subjectLine: subject,
+
+    });
+
+    if (!to) return;
+
+
+
+    await this.sendMail({ to, subject, html, text, metadata: { eventType: 'PROJECT_MODIFIED', projectId: project.id } });
+
+  }
+
+
+
+  async sendProductObservationsBatchEmail(params: {
+
+    subject: SubjectEntity;
+
+    observations: ObservationEntity[];
+
+    batchId: string;
+
+  }): Promise<void> {
+
+    if (!this.emailService.isEmailEnabled()) return;
+
+
+
+    const { subject, html, text } = buildProductObservationsBatchEmail(params);
+
+    const to = await this.resolveInstitutionalRecipient({
+
+      primary: params.subject.project?.factoryOwner?.email,
+
+      roleFallback: UserRole.FABRICA,
+
+      eventType: 'OBSERVATION_BATCH_SENT',
+
+      projectId: params.subject.project?.id,
+
+      subjectLine: subject,
+
+    });
+
+    if (!to) return;
+
+
+
+    await this.sendMail({
+
+      to,
+
+      subject,
+
+      html,
+
+      text,
+
+      metadata: {
+
+        eventType: 'OBSERVATION_BATCH_SENT',
+
+        subjectId: params.subject.id,
+
+        projectId: params.subject.project?.id,
+
+      },
+
+    });
+
+  }
+
+
+
+  async sendFactoryCorrectionsBatchEmail(params: {
+
+    subject: SubjectEntity;
+
+    observations: ObservationEntity[];
+
+    batchId: string;
+
+  }): Promise<void> {
+
+    if (!this.emailService.isEmailEnabled()) return;
+
+
+
+    const { subject, html, text } = buildFactoryCorrectionsBatchEmail(params);
+
+    const to = await this.resolveInstitutionalRecipient({
+
+      primary: params.subject.project?.productOwner?.email,
+
+      roleFallback: UserRole.PRODUCT,
+
+      eventType: 'CORRECTION_BATCH_NOTIFIED',
+
+      projectId: params.subject.project?.id,
+
+      subjectLine: subject,
+
+    });
+
+    if (!to) return;
+
+
+
+    await this.sendMail({
+
+      to,
+
+      subject,
+
+      html,
+
+      text,
+
+      metadata: {
+
+        eventType: 'CORRECTION_BATCH_NOTIFIED',
+
+        subjectId: params.subject.id,
+
+        projectId: params.subject.project?.id,
+
+      },
+
+    });
+
+  }
+
 }
+
+

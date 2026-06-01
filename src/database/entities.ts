@@ -1,6 +1,7 @@
 import { AuditLogEntity } from '../audit/audit-log.entity';
 import { StatusHistoryEntity } from '../audit/status-history.entity';
 import { ChecklistItemEntity } from '../checklist/checklist-item.entity';
+import { EmailDeliveryLogEntity } from '../email/email-delivery-log.entity';
 import { NotificationEntity } from '../notifications/notification.entity';
 import { ObservationMessageEntity } from '../observations/observation-message.entity';
 import { ObservationBatchEntity } from '../observations/observation-batch.entity';
@@ -28,6 +29,7 @@ export const ALL_ENTITIES = [
   AuditLogEntity,
   StatusHistoryEntity,
   NotificationEntity,
+  EmailDeliveryLogEntity,
   SemesterOperationalCheckEntity,
   SemesterOperationalTransitionEntity,
 ];

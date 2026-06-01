@@ -16,6 +16,7 @@ import { ProjectRadicationModule } from './project-radication/project-radication
 import { PlanningDashboardModule } from './planning-dashboard/planning-dashboard.module';
 import { LmsDashboardModule } from './lms-dashboard/lms-dashboard.module';
 import { AuditModule } from './audit/audit.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { AuditModule } from './audit/audit.module';
           PlanningDashboardModule,
           LmsDashboardModule,
           AuditModule,
+          EmailModule,
         ]
       : []),
   ],

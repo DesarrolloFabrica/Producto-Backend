@@ -24,7 +24,6 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ObservationsService } from '../observations/observations.service';
 import { ProjectEntity } from '../projects/project.entity';
 import { ProjectsService } from '../projects/projects.service';
-import { MailService } from '../mail/mail.service';
 import { Priority } from '../common/enums/priority.enum';
 import { ObservationNotificationStatus } from '../common/enums/observation-notification-status.enum';
 import { ObservationStatus } from '../common/enums/observation-status.enum';
@@ -153,7 +152,6 @@ export class SubjectsService {
     private readonly subjectWorkflowService: SubjectWorkflowService,
     private readonly semesterWorkflowService: SemesterWorkflowService,
     private readonly projectWorkflowService: ProjectWorkflowService,
-    private readonly mailService: MailService,
     @Inject(forwardRef(() => InstitutionalWorkflowService))
     private readonly institutionalWorkflowService: InstitutionalWorkflowService,
   ) {}

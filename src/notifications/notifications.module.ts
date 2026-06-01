@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
+import { EmailModule } from '../email/email.module';
 import { ObservationEntity } from '../observations/observation.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { NotificationEntity } from './notification.entity';
@@ -8,7 +9,11 @@ import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([NotificationEntity, SubjectEntity, ObservationEntity]), AuthModule],
+  imports: [
+    TypeOrmModule.forFeature([NotificationEntity, SubjectEntity, ObservationEntity]),
+    AuthModule,
+    EmailModule,
+  ],
   controllers: [NotificationsController],
   providers: [NotificationsService],
   exports: [NotificationsService],

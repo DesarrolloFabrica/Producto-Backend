@@ -5,7 +5,6 @@ import { AuthModule } from '../auth/auth.module';
 import { ChecklistItemEntity } from '../checklist/checklist-item.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { ProjectsModule } from '../projects/projects.module';
-import { MailModule } from '../mail/mail.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { ObservationsModule } from '../observations/observations.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -25,7 +24,6 @@ import { InstitutionalWorkflowModule } from '../institutional-workflow/instituti
     WorkflowModule,
     forwardRef(() => ObservationsModule),
     NotificationsModule,
-    MailModule,
     forwardRef(() => InstitutionalWorkflowModule),
   ],
   controllers: [SubjectsController],

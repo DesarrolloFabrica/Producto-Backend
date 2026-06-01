@@ -58,9 +58,12 @@ export class UsersService {
   }
 
   async findActiveByEmail(email: string): Promise<UserEntity | null> {
-    return await this.usersRepo.findOne({
-      where: { email: email.toLowerCase(), status: UserStatus.ACTIVE },
-    });
+    const normalized = email.trim().toLowerCase();
+    return await this.usersRepo
+      .createQueryBuilder('u')
+      .where('LOWER(u.email) = :email', { email: normalized })
+      .andWhere('u.status = :status', { status: UserStatus.ACTIVE })
+      .getOne();
   }
 
   async findActiveByEmailWithPassword(

@@ -22,7 +22,6 @@ import { ProjectStatus } from '../common/enums/project-status.enum';
 import { SubjectStatus } from '../common/enums/subject-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { AuditService } from '../audit/audit.service';
-import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ProjectEntity } from '../projects/project.entity';
 import { SubjectEntity } from '../subjects/subject.entity';
@@ -65,7 +64,6 @@ export class InstitutionalWorkflowService {
     private readonly transitionRepo: Repository<OperationalTransitionEntity>,
     private readonly slaService: InstitutionalWorkflowSlaService,
     private readonly notificationsService: NotificationsService,
-    private readonly mailService: MailService,
     private readonly auditService: AuditService,
     @Inject(forwardRef(() => ProjectInstitutionalWorkflowService))
     private readonly projectRadicationWorkflow: ProjectInstitutionalWorkflowService,
@@ -613,7 +611,6 @@ export class InstitutionalWorkflowService {
     switch (dto.action) {
       case InstitutionalOperationalAction.PLANNING_VALIDATE_INITIAL:
         await notify(UserRole.FABRICA, 'Solicitud validada', `Planeación validó la solicitud de "${name}".`, NotificationEventType.INSTITUTIONAL_PLANNING_VALIDATED_INITIAL);
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action });
         break;
       case InstitutionalOperationalAction.PLANNING_RETURN_INITIAL:
         if (subject.project.productOwner?.id) {
@@ -631,7 +628,6 @@ export class InstitutionalWorkflowService {
             manager,
           );
         }
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action, reason: dto.returnReason ?? dto.comment });
         break;
       case InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT:
         await notify(UserRole.PLANEACION, 'Contenido entregado', `Fábrica terminó producción de "${name}".`, NotificationEventType.INSTITUTIONAL_FACTORY_DELIVERED);
@@ -651,15 +647,12 @@ export class InstitutionalWorkflowService {
             manager,
           );
         }
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action });
         break;
       case InstitutionalOperationalAction.PLANNING_VALIDATE_PRODUCTION:
         await notify(UserRole.LMS, 'Listo para carga LMS', `Planeación validó producción de "${name}".`, NotificationEventType.INSTITUTIONAL_PLANNING_VALIDATED_PRODUCTION);
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action });
         break;
       case InstitutionalOperationalAction.PLANNING_RETURN_PRODUCTION:
         await notify(UserRole.FABRICA, 'Producción devuelta', `Planeación devolvió "${name}": ${dto.returnReason ?? dto.comment}`, NotificationEventType.INSTITUTIONAL_RETURNED_TO_FACTORY);
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action, reason: dto.returnReason ?? dto.comment });
         break;
       case InstitutionalOperationalAction.LMS_CONFIRM_UPLOAD:
         await notify(UserRole.PLANEACION, 'Carga LMS completada', `LMS completó carga de "${name}".`, NotificationEventType.INSTITUTIONAL_LMS_UPLOAD_COMPLETED);
@@ -678,7 +671,6 @@ export class InstitutionalWorkflowService {
             manager,
           );
         }
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action });
         break;
       case InstitutionalOperationalAction.PLANNING_VALIDATE_LMS:
         if (subject.project.productOwner?.id) {
@@ -696,15 +688,12 @@ export class InstitutionalWorkflowService {
             manager,
           );
         }
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action });
         break;
       case InstitutionalOperationalAction.PLANNING_RETURN_LMS:
         await notify(UserRole.LMS, 'Carga devuelta', `Planeación devolvió carga LMS de "${name}": ${dto.returnReason ?? dto.comment}`, NotificationEventType.INSTITUTIONAL_RETURNED_TO_LMS);
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action, reason: dto.returnReason ?? dto.comment });
         break;
       case InstitutionalOperationalAction.PRODUCT_REQUEST_CHANGES:
         await notify(UserRole.FABRICA, 'Correcciones académicas', `Product solicitó correcciones en "${name}".`, NotificationEventType.INSTITUTIONAL_PRODUCT_REQUESTED_CHANGES);
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action });
         break;
       case InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC:
         if (subject.project.productOwner?.id) {
@@ -722,11 +711,9 @@ export class InstitutionalWorkflowService {
             manager,
           );
         }
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action });
         break;
       case InstitutionalOperationalAction.FACTORY_START_PRODUCTION:
         await notify(UserRole.PLANEACION, 'Producción iniciada', `Fábrica inició producción de "${name}".`, NotificationEventType.INSTITUTIONAL_FACTORY_DELIVERED);
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action });
         break;
       case InstitutionalOperationalAction.PRODUCT_START_ACADEMIC_REVIEW:
         if (subject.project.productOwner?.id) {
@@ -749,7 +736,6 @@ export class InstitutionalWorkflowService {
         await notify(UserRole.PRODUCT, 'Asignatura finalizada', `"${name}" fue radicada y finalizada.`, NotificationEventType.INSTITUTIONAL_FINALIZED);
         await notify(UserRole.FABRICA, 'Asignatura finalizada', `"${name}" fue radicada y finalizada.`, NotificationEventType.INSTITUTIONAL_FINALIZED);
         await notify(UserRole.LMS, 'Asignatura finalizada', `"${name}" fue radicada y finalizada.`, NotificationEventType.INSTITUTIONAL_FINALIZED);
-        void this.mailService.sendInstitutionalTransitionEmail({ subject, action: dto.action });
         break;
       default:
         break;

@@ -1,15 +1,24 @@
 import type { ObservationEntity } from '../../observations/observation.entity';
 import type { SubjectEntity } from '../../subjects/subject.entity';
-
-function buildAppUrl(path: string): string {
-  const base = (process.env.FRONTEND_APP_URL ?? process.env.APP_URL ?? 'http://localhost:5173').replace(/\/$/, '');
-  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
-}
+import {
+  buildBulletList,
+  buildFrontendUrl,
+  buildInstitutionalEmailLayout,
+  buildInstitutionalSubject,
+} from '../../email/templates/institutional-email-layout';
 
 function resolveDeliverableLabel(observation: ObservationEntity): string {
   if (observation.checklistItem?.label) return observation.checklistItem.label;
-  if (observation.topic?.name) return `Tema: ${observation.topic.name}`;
-  return 'Asignatura';
+  if (observation.topic?.name) return observation.topic.name;
+  return 'General';
+}
+
+function buildObservationItems(observations: ObservationEntity[]): { html: string; text: string } {
+  const items = observations.map((obs) => {
+    const label = resolveDeliverableLabel(obs);
+    return `${label}: ${obs.text}`;
+  });
+  return buildBulletList(items);
 }
 
 export function buildProductObservationsBatchEmail(params: {
@@ -17,30 +26,31 @@ export function buildProductObservationsBatchEmail(params: {
   observations: ObservationEntity[];
   batchId: string;
 }) {
-  const { subject, observations, batchId } = params;
+  const { subject, observations } = params;
   const project = subject.project;
-  const subjectUrl = buildAppUrl(`/subjects/${subject.id}?focus=correction`);
-  const rows = observations
-    .map(
-      (obs) =>
-        `<li><strong>${resolveDeliverableLabel(obs)}</strong>: ${obs.text}<br/><a href="${subjectUrl}">Ver asignatura</a></li>`,
-    )
-    .join('');
+  const subjectUrl = buildFrontendUrl(`/subjects/${subject.id}?focus=correction`);
+  const title = 'Observaciones de Product';
+  const items = buildObservationItems(observations);
 
-  const subjectLine = `[Producto] Observaciones de Product — ${subject.name}`;
-  const html = `
-    <html><body style="font-family:Arial,sans-serif;color:#1e293b">
-      <h2>Observaciones de Product para Fábrica</h2>
-      <p><strong>Programa:</strong> ${project?.program ?? '—'}</p>
-      <p><strong>Asignatura:</strong> ${subject.name}</p>
-      <p><strong>Total:</strong> ${observations.length} observación(es)</p>
-      <ul>${rows}</ul>
-      <p><a href="${subjectUrl}">Abrir asignatura</a></p>
-      <p style="color:#64748b;font-size:12px">Lote ${batchId}</p>
-    </body></html>`;
-  const text = `Observaciones Product → Fábrica\n${subject.name}\n${observations.length} observaciones\n${subjectUrl}`;
+  const { html, text } = buildInstitutionalEmailLayout({
+    title,
+    eventLabel: 'Fábrica',
+    intro:
+      'Product ha registrado observaciones que requieren revisión y corrección en Fábrica.',
+    highlights: [
+      { label: 'Programa', value: project?.program ?? '—' },
+      { label: 'Asignatura', value: subject.name },
+      { label: 'Observaciones', value: String(observations.length) },
+    ],
+    sections: [{ title: 'Detalle', html: items.html, text: items.text }],
+    cta: { label: 'Ver asignatura en plataforma', url: subjectUrl },
+  });
 
-  return { subject: subjectLine, html, text };
+  return {
+    subject: buildInstitutionalSubject(title, subject.name),
+    html,
+    text,
+  };
 }
 
 export function buildFactoryCorrectionsBatchEmail(params: {
@@ -48,28 +58,34 @@ export function buildFactoryCorrectionsBatchEmail(params: {
   observations: ObservationEntity[];
   batchId: string;
 }) {
-  const { subject, observations, batchId } = params;
+  const { subject, observations } = params;
   const project = subject.project;
-  const subjectUrl = buildAppUrl(`/subjects/${subject.id}`);
-  const rows = observations
-    .map(
-      (obs) =>
-        `<li><strong>${resolveDeliverableLabel(obs)}</strong>: corrección aplicada — ${obs.text}</li>`,
-    )
-    .join('');
+  const subjectUrl = buildFrontendUrl(`/subjects/${subject.id}`);
+  const title = 'Correcciones de Fábrica';
+  const items = buildBulletList(
+    observations.map((obs) => {
+      const label = resolveDeliverableLabel(obs);
+      return `${label}: Corrección aplicada — ${obs.text}`;
+    }),
+  );
 
-  const subjectLine = `[Producto] Correcciones de Fábrica — ${subject.name}`;
-  const html = `
-    <html><body style="font-family:Arial,sans-serif;color:#1e293b">
-      <h2>Correcciones notificadas por Fábrica</h2>
-      <p><strong>Programa:</strong> ${project?.program ?? '—'}</p>
-      <p><strong>Asignatura:</strong> ${subject.name}</p>
-      <p><strong>Total:</strong> ${observations.length} corrección(es)</p>
-      <ul>${rows}</ul>
-      <p><a href="${subjectUrl}">Revisar en Product</a></p>
-      <p style="color:#64748b;font-size:12px">Lote ${batchId}</p>
-    </body></html>`;
-  const text = `Correcciones Fábrica → Product\n${subject.name}\n${observations.length} correcciones\n${subjectUrl}`;
+  const { html, text } = buildInstitutionalEmailLayout({
+    title,
+    eventLabel: 'Product',
+    intro:
+      'Fábrica ha notificado correcciones aplicadas que requieren validación en Product.',
+    highlights: [
+      { label: 'Programa', value: project?.program ?? '—' },
+      { label: 'Asignatura', value: subject.name },
+      { label: 'Correcciones', value: String(observations.length) },
+    ],
+    sections: [{ title: 'Detalle', html: items.html, text: items.text }],
+    cta: { label: 'Revisar en plataforma', url: subjectUrl },
+  });
 
-  return { subject: subjectLine, html, text };
+  return {
+    subject: buildInstitutionalSubject(title, subject.name),
+    html,
+    text,
+  };
 }

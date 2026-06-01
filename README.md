@@ -57,7 +57,11 @@ SEED_PRODUCT_PASSWORD=Product123!
 | `BCRYPT_SALT_ROUNDS` | Rondas de bcrypt para contraseñas |
 | `SEED_*_PASSWORD` | Contraseñas de usuarios seed (solo desarrollo) |
 
-### Correo (nueva solicitud de producto)
+### Correo (notificaciones institucionales y solicitudes)
+
+Documentación completa: **[EMAIL_SETUP.md](EMAIL_SETUP.md)** (Gmail local, modo prueba, fail-closed, QA).
+
+Los correos reales están habilitados solo en **modo prueba**. Para producción se debe usar proveedor institucional o relay autorizado.
 
 Al crear un proyecto con `POST /projects`, el backend puede enviar un correo con el detalle de la solicitud.
 

@@ -4,7 +4,6 @@ import { SubjectsModule } from '../subjects/subjects.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { AuditModule } from '../audit/audit.module';
-import { MailModule } from '../mail/mail.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { SemesterEntity } from '../semesters/semester.entity';
@@ -31,7 +30,6 @@ import { SubjectOperationalCheckEntity } from './subject-operational-check.entit
     AuthModule,
     AuditModule,
     NotificationsModule,
-    MailModule,
     forwardRef(() => ObservationsModule),
     forwardRef(() => ProjectRadicationModule),
     forwardRef(() => SubjectsModule),

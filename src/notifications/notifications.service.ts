@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { InjectRepository } from '@nestjs/typeorm';
 
@@ -15,6 +15,8 @@ import { ObservationStatus } from '../common/enums/observation-status.enum';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { ObservationEntity } from '../observations/observation.entity';
 import { UserEntity } from '../users/user.entity';
+import { EmailService } from '../email/email.service';
+import { isInstitutionalEmailEvent } from '../email/recipient-resolver';
 
 import {
 
@@ -80,6 +82,7 @@ const LEGACY_INFORMATIVE_TITLES = ['Asignatura aprobada', 'Materia aprobada'];
 @Injectable()
 
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
     @InjectRepository(NotificationEntity)
@@ -88,6 +91,7 @@ export class NotificationsService {
     private readonly subjectRepo: Repository<SubjectEntity>,
     @InjectRepository(ObservationEntity)
     private readonly observationRepo: Repository<ObservationEntity>,
+    private readonly emailService: EmailService,
   ) {}
 
 
@@ -529,6 +533,8 @@ export class NotificationsService {
 
       await this.supersedePreviousUnread(repo, saved);
 
+      this.dispatchInstitutionalEmail(saved);
+
       return saved;
 
     }
@@ -538,6 +544,8 @@ export class NotificationsService {
     const saved = await repo.save(notification);
 
     await this.supersedePreviousUnread(repo, saved);
+
+    this.dispatchInstitutionalEmail(saved);
 
     return saved;
 
@@ -589,6 +597,8 @@ export class NotificationsService {
 
       await this.supersedePreviousUnread(repo, saved);
 
+      this.dispatchInstitutionalEmail(saved);
+
       return saved;
 
     }
@@ -599,8 +609,26 @@ export class NotificationsService {
 
     await this.supersedePreviousUnread(repo, saved);
 
+    this.dispatchInstitutionalEmail(saved);
+
     return saved;
 
+  }
+
+
+
+  private dispatchInstitutionalEmail(notification: NotificationEntity): void {
+    if (!isInstitutionalEmailEvent(notification.eventType)) {
+      return;
+    }
+
+    const notificationId = notification.id;
+    setTimeout(() => {
+      void this.emailService.sendForNotificationById(notificationId).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Email async failed: ${message}`);
+      });
+    }, 500);
   }
 
 

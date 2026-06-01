@@ -3,7 +3,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { InstitutionalWorkflowModule } from '../institutional-workflow/institutional-workflow.module';
-import { MailModule } from '../mail/mail.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ObservationsModule } from '../observations/observations.module';
 import { SemesterOperationalCheckEntity } from '../institutional-workflow/semester-operational-check.entity';
@@ -31,7 +30,6 @@ import { ProjectRadicationReadinessService } from './project-radication-readines
     AuthModule,
     AuditModule,
     NotificationsModule,
-    MailModule,
     forwardRef(() => ObservationsModule),
     forwardRef(() => InstitutionalWorkflowModule),
   ],
