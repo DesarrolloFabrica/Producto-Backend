@@ -37,7 +37,10 @@ import {
 import { OperationalTransitionEntity } from './operational-transition.entity';
 import { SubjectOperationalCheckEntity } from './subject-operational-check.entity';
 import { ACADEMIC_REVIEW_BLOCKED_MESSAGE, OPERATIONAL_CHECK_DEFINITIONS } from './institutional-workflow.constants';
-import { isInstitutionalWorkflowEnabled } from './institutional-workflow.config';
+import {
+  isInstitutionalWorkflowEnabled,
+  isReducedInstitutionalFlow,
+} from './institutional-workflow.config';
 import { ProjectInstitutionalWorkflowService } from '../project-radication/project-institutional-workflow.service';
 import { InstitutionalWorkflowSlaService } from './institutional-workflow-sla.service';
 import {
@@ -123,7 +126,9 @@ export class InstitutionalWorkflowService {
     const transitionRepository = manager.getRepository(OperationalTransitionEntity);
 
     const now = new Date();
-    const initial = InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION;
+    const initial = isReducedInstitutionalFlow()
+      ? InstitutionalOperationalState.PENDING_FACTORY
+      : InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION;
     await subjectRepo.update(subjectId, {
       operationalState: initial,
       operationalStageEnteredAt: now,
@@ -288,7 +293,9 @@ export class InstitutionalWorkflowService {
     );
 
     if (
-      dto.action === InstitutionalOperationalAction.PLANNING_VALIDATE_INITIAL &&
+      (dto.action === InstitutionalOperationalAction.PLANNING_VALIDATE_INITIAL ||
+        (isReducedInstitutionalFlow() &&
+          fromState === InstitutionalOperationalState.PENDING_FACTORY)) &&
       this.usesInstitutionalWorkflow(updated.project)
     ) {
       await this.projectRadicationWorkflow.lockScopeIfNeeded(updated.project.id, manager);
@@ -402,6 +409,9 @@ export class InstitutionalWorkflowService {
         : statesPendingForRole(user.role);
 
     const uniqueStates = [...new Set(pendingStates)];
+    if (uniqueStates.length === 0) {
+      return [];
+    }
 
     const qb = this.subjectRepo
       .createQueryBuilder('s')
@@ -514,6 +524,7 @@ export class InstitutionalWorkflowService {
   }
 
   private checkKeyForState(next: InstitutionalOperationalState): OperationalCheckKey | null {
+    const reduced = isReducedInstitutionalFlow();
     switch (next) {
       case InstitutionalOperationalState.PENDING_FACTORY:
         return OperationalCheckKey.PLANNING_INITIAL_VALIDATED;
@@ -524,7 +535,9 @@ export class InstitutionalWorkflowService {
       case InstitutionalOperationalState.PENDING_PLANNING_LMS_VALIDATION:
         return OperationalCheckKey.LMS_UPLOAD_COMPLETED;
       case InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW:
-        return OperationalCheckKey.PLANNING_LMS_VALIDATED;
+        return reduced
+          ? OperationalCheckKey.FACTORY_CONTENT_DELIVERED
+          : OperationalCheckKey.PLANNING_LMS_VALIDATED;
       case InstitutionalOperationalState.PENDING_PROJECT_RADICATION:
         return OperationalCheckKey.PRODUCT_ACADEMIC_APPROVED;
       case InstitutionalOperationalState.FINALIZED:
@@ -588,6 +601,7 @@ export class InstitutionalWorkflowService {
     user: UserEntity,
     manager: EntityManager,
   ): Promise<void> {
+    const reduced = isReducedInstitutionalFlow();
     const name = subject.name;
     const projectId = subject.project.id;
     const subjectId = subject.id;
@@ -630,6 +644,24 @@ export class InstitutionalWorkflowService {
         }
         break;
       case InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT:
+        if (reduced) {
+          if (subject.project.productOwner?.id) {
+            await this.notificationsService.notifyUser(
+              subject.project.productOwner.id,
+              {
+                type: NotificationType.INFO,
+                title: 'Produccion terminada',
+                message: `Fabrica termino contenido de "${name}". Puede iniciar revision Product.`,
+                projectId,
+                subjectId,
+                eventType: NotificationEventType.INSTITUTIONAL_FACTORY_DELIVERED,
+                actionUrl: url,
+              },
+              manager,
+            );
+          }
+          break;
+        }
         await notify(UserRole.PLANEACION, 'Contenido entregado', `Fábrica terminó producción de "${name}".`, NotificationEventType.INSTITUTIONAL_FACTORY_DELIVERED);
         await notify(UserRole.LMS, 'Pendiente carga LMS', `La asignatura "${name}" estará lista tras validación de Planeación.`, NotificationEventType.INSTITUTIONAL_FACTORY_DELIVERED);
         if (subject.project.productOwner?.id) {
@@ -713,6 +745,7 @@ export class InstitutionalWorkflowService {
         }
         break;
       case InstitutionalOperationalAction.FACTORY_START_PRODUCTION:
+        if (reduced) break;
         await notify(UserRole.PLANEACION, 'Producción iniciada', `Fábrica inició producción de "${name}".`, NotificationEventType.INSTITUTIONAL_FACTORY_DELIVERED);
         break;
       case InstitutionalOperationalAction.PRODUCT_START_ACADEMIC_REVIEW:

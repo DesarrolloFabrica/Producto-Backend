@@ -8,7 +8,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, IsNull, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, Repository } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { AuditAction } from '../common/enums/audit-action.enum';
 import { InstitutionalOperationalAction } from '../common/enums/institutional-operational-action.enum';
@@ -22,8 +22,19 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ObservationsService } from '../observations/observations.service';
 import { ProjectInstitutionalWorkflowService } from '../project-radication/project-institutional-workflow.service';
+
+function resolveProductOwnerName(project: { productOwner?: { name?: string | null } | null }): string | null {
+  const name = project.productOwner?.name?.trim();
+  return name || null;
+}
 import { SemesterEntity } from '../semesters/semester.entity';
 import { FactoryProductionStatus } from '../common/enums/factory-production-status.enum';
+import { ChecklistStatus } from '../common/enums/checklist-status.enum';
+import {
+  SUBJECT_TOPICS_MAX,
+  SUBJECT_TOPICS_MIN,
+  SUBJECT_TOPICS_RANGE_MESSAGE,
+} from '../common/constants/subject-topics.constants';
 import { isSubjectFactoryProductionComplete } from '../subjects/factory-production.util';
 import { SubjectEntity } from '../subjects/subject.entity';
 import { SubjectsService } from '../subjects/subjects.service';
@@ -44,6 +55,7 @@ import {
   responsibleRoleForState,
   statesPendingForRole,
 } from './institutional-workflow.transitions';
+import { isReducedInstitutionalFlow } from './institutional-workflow.config';
 import { OPERATIONAL_CHECK_DEFINITIONS } from './institutional-workflow.constants';
 import { InstitutionalWorkflowSlaService } from './institutional-workflow-sla.service';
 import { ProgramOperationalWorkItemDto } from './dto/program-operational-work-item.dto';
@@ -69,6 +81,18 @@ const STATE_ORDER: InstitutionalOperationalState[] = [
   InstitutionalOperationalState.FINALIZED,
 ];
 
+/** Estados donde el cierre académico automático ya no aplica en lecturas del workspace. */
+const SEMESTER_WORKSPACE_READ_ONLY_STATES: InstitutionalOperationalState[] = [
+  InstitutionalOperationalState.FINALIZED,
+  InstitutionalOperationalState.PENDING_PROJECT_RADICATION,
+];
+
+/** Estados que pueden disparar sync de cierre académico al abrir el workspace. */
+const SEMESTER_CLOSURE_SYNC_STATES: InstitutionalOperationalState[] = [
+  InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW,
+  InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW,
+];
+
 interface SemesterSubjectSummary {
   subjectId: string;
   subjectName: string;
@@ -80,12 +104,19 @@ interface SemesterSubjectSummary {
   openObservationsCount: number;
 }
 
+interface SemesterWorkspaceLoadContext {
+  subjects: SubjectEntity[];
+  unresolvedBySubject: Map<string, number>;
+  blockingBySubject: Map<string, number>;
+}
+
 export interface SemesterOperationalWorkspaceDto {
   semesterId: string;
   semesterNumber: number;
   projectId: string;
   program: string;
   school: string;
+  productOwnerName: string | null;
   operationalState: InstitutionalOperationalState;
   currentResponsibleRole: UserRole;
   academicReviewEnabled: boolean;
@@ -120,6 +151,7 @@ export interface SemesterOperationalWorkItemDto {
   projectId: string;
   program: string;
   school: string;
+  productOwnerName: string | null;
   operationalState: InstitutionalOperationalState;
   currentResponsibleRole: UserRole;
   stageDueAt: Date | null;
@@ -129,6 +161,7 @@ export interface SemesterOperationalWorkItemDto {
   actionUrl: string;
   subjectsTotal: number;
   subjectsReady: number;
+  subjectsApproved: number;
   openObservations: number;
 }
 
@@ -163,7 +196,9 @@ export class SemesterOperationalWorkflowService {
     const checkRepo = manager.getRepository(SemesterOperationalCheckEntity);
     const transitionRepo = manager.getRepository(SemesterOperationalTransitionEntity);
     const now = new Date();
-    const initial = InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION;
+    const initial = isReducedInstitutionalFlow()
+      ? InstitutionalOperationalState.PENDING_FACTORY
+      : InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION;
     await semesterRepo.update(semesterId, {
       operationalState: initial,
       operationalStageEnteredAt: now,
@@ -299,7 +334,10 @@ export class SemesterOperationalWorkflowService {
       afterJson: { operationalState: next, action: dto.action },
     }, manager);
 
-    if (dto.action === InstitutionalOperationalAction.PLANNING_VALIDATE_INITIAL) {
+    if (
+      dto.action === InstitutionalOperationalAction.PLANNING_VALIDATE_INITIAL ||
+      (isReducedInstitutionalFlow() && fromState === InstitutionalOperationalState.PENDING_FACTORY)
+    ) {
       await this.projectRadicationWorkflow.lockScopeIfNeeded(fresh.project.id, manager);
     }
     if (dto.action === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) {
@@ -308,8 +346,8 @@ export class SemesterOperationalWorkflowService {
   }
 
   /**
-   * Cuando todas las materias del semestre ya están aprobadas académicamente (PENDING_PROJECT_RADICATION),
-   * pero el semestre sigue en IN_PRODUCT_ACADEMIC_REVIEW, aplica la transición de cierre de revisión académica.
+   * Sincroniza transiciones de cierre académico del semestre cuando el trabajo ya está hecho
+   * pero el estado persistido quedó desalineado (p. ej. materias aprobadas sin cierre formal).
    */
   async syncSemestersWhenAllSubjectsReadyForRadication(
     projectId: string,
@@ -324,51 +362,124 @@ export class SemesterOperationalWorkflowService {
         project: { id: projectId },
         deletedAt: IsNull(),
         createdFromChange: false,
+        operationalState: In(SEMESTER_CLOSURE_SYNC_STATES),
       },
     });
+    if (semesters.length === 0) return;
 
-    for (const semester of semesters) {
-      if (semester.operationalState !== InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW) {
-        continue;
+    for (let pass = 0; pass < 2; pass += 1) {
+      for (const semester of semesters) {
+        const current = await semesterRepo.findOne({ where: { id: semester.id } });
+        if (!current) continue;
+
+        const subjects = await subjectRepo.find({
+          where: {
+            semester: { id: semester.id },
+            deletedAt: IsNull(),
+            createdFromChange: false,
+          },
+        });
+        if (subjects.length === 0) continue;
+
+        if (current.operationalState === InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW) {
+          const openObservations = await this.countOpenObservations(semester.id);
+          const allFactoryComplete = subjects.every((subject) => isSubjectFactoryProductionComplete(subject));
+          if (allFactoryComplete && openObservations === 0) {
+            await this.applyTransitionInManager(
+              manager,
+              semester.id,
+              { action: InstitutionalOperationalAction.PRODUCT_START_ACADEMIC_REVIEW },
+              user,
+              { bypassReadinessCheck: true },
+            );
+          }
+          continue;
+        }
+
+        if (current.operationalState !== InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW) {
+          continue;
+        }
+
+        const allSubjectsReady = subjects.every(
+          (subject) =>
+            subject.status === SubjectStatus.APPROVED &&
+            subject.operationalState === InstitutionalOperationalState.PENDING_PROJECT_RADICATION,
+        );
+        if (!allSubjectsReady) continue;
+
+        await this.applyTransitionInManager(
+          manager,
+          semester.id,
+          { action: InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC },
+          user,
+          { bypassReadinessCheck: true },
+        );
       }
-
-      const subjects = await subjectRepo.find({
-        where: {
-          semester: { id: semester.id },
-          deletedAt: IsNull(),
-          createdFromChange: false,
-        },
-      });
-      if (subjects.length === 0) continue;
-
-      const allSubjectsReady = subjects.every(
-        (subject) =>
-          subject.status === SubjectStatus.APPROVED &&
-          subject.operationalState === InstitutionalOperationalState.PENDING_PROJECT_RADICATION,
-      );
-      if (!allSubjectsReady) continue;
-
-      await this.applyTransitionInManager(
-        manager,
-        semester.id,
-        { action: InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC },
-        user,
-        { bypassReadinessCheck: true },
-      );
     }
   }
 
+  private shouldSkipSemesterClosureSync(state: InstitutionalOperationalState): boolean {
+    return SEMESTER_WORKSPACE_READ_ONLY_STATES.includes(state);
+  }
+
+  private sumObservationCounts(counts: Map<string, number>): number {
+    let total = 0;
+    for (const count of counts.values()) total += count;
+    return total;
+  }
+
+  private async syncProjectSemesterClosureIfNeeded(
+    projectId: string,
+    user: UserEntity,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const run = async (tx: EntityManager) => {
+      try {
+        await this.syncSemestersWhenAllSubjectsReadyForRadication(projectId, tx, user);
+      } catch {
+        // No bloquear lecturas del workspace por fallos de sincronización oportunista.
+      }
+    };
+    if (manager) {
+      await run(manager);
+      return;
+    }
+    await this.semesterRepo.manager.transaction(run);
+  }
+
   async getWorkspace(semesterId: string, user: UserEntity): Promise<SemesterOperationalWorkspaceDto> {
-    const semester = await this.loadSemester(semesterId);
+    let semester = await this.loadSemester(semesterId);
     this.assertAccess(semester, user);
-    await this.ensureChecks(semesterId);
-    const [checks, timeline, subjects, openObservations] = await Promise.all([
-      this.checkRepo.find({ where: { semester: { id: semesterId } }, relations: { checkedBy: true }, order: { checkKey: 'ASC' } }),
-      this.transitionRepo.find({ where: { semester: { id: semesterId } }, relations: { actor: true }, order: { createdAt: 'ASC' } }),
-      this.loadSubjectSummaries(semesterId, user, semester.operationalState),
-      this.countOpenObservations(semesterId),
+
+    const skipClosureSync = this.shouldSkipSemesterClosureSync(semester.operationalState);
+    if (!skipClosureSync) {
+      await this.syncProjectSemesterClosureIfNeeded(semester.project.id, user);
+      semester = await this.loadSemester(semesterId);
+    }
+
+    const needsAcademicDetail =
+      isSemesterProductAcademicReviewPhase(semester.operationalState) &&
+      (user.role === UserRole.PRODUCT || user.role === UserRole.ADMIN);
+
+    const [loadContext, checks, timeline] = await Promise.all([
+      this.loadSemesterWorkspaceContext(semesterId, { includeAcademicRelations: needsAcademicDetail }),
+      this.checkRepo.find({
+        where: { semester: { id: semesterId } },
+        relations: { checkedBy: true },
+        order: { checkKey: 'ASC' },
+      }),
+      this.transitionRepo.find({
+        where: { semester: { id: semesterId } },
+        relations: { actor: true },
+        order: { createdAt: 'ASC' },
+      }),
+      skipClosureSync ? Promise.resolve() : this.ensureChecks(semesterId),
     ]);
-    const readiness = await this.computeReadiness(semester, null, user);
+
+    const openObservations = this.sumObservationCounts(loadContext.unresolvedBySubject);
+
+    const subjects = this.buildSubjectSummaries(loadContext, user, semester.operationalState);
+    const readiness = this.computeReadinessFromContext(semester, null, loadContext);
     const availableActions = user.role === UserRole.ADMIN
       ? []
       : allowedActionsForRole(user.role, semester.operationalState);
@@ -381,13 +492,14 @@ export class SemesterOperationalWorkflowService {
       }
       return true;
     });
-    const subjectsReady = await this.countFactoryProductionReadySubjects(semesterId);
+    const subjectsReady = loadContext.subjects.filter((s) => isSubjectFactoryProductionComplete(s)).length;
     return {
       semesterId: semester.id,
       semesterNumber: semester.semesterNumber,
       projectId: semester.project.id,
       program: semester.project.program,
       school: semester.project.school,
+      productOwnerName: resolveProductOwnerName(semester.project),
       operationalState: semester.operationalState,
       currentResponsibleRole: responsibleRoleForState(semester.operationalState),
       academicReviewEnabled: isAcademicChecklistEditable(semester.operationalState) || isAcademicReviewReady(semester.operationalState),
@@ -437,9 +549,13 @@ export class SemesterOperationalWorkflowService {
     if (user.role !== UserRole.PLANEACION && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Solo Planeacion puede consultar seguimiento');
     }
+    if (isReducedInstitutionalFlow() && user.role === UserRole.PLANEACION) {
+      return [];
+    }
     const semesters = await this.semesterRepo
       .createQueryBuilder('sem')
       .innerJoinAndSelect('sem.project', 'p')
+      .leftJoinAndSelect('p.productOwner', 'productOwner')
       .leftJoinAndSelect('sem.subjects', 'subjects', 'subjects.deletedAt IS NULL')
       .where('sem.deletedAt IS NULL')
       .andWhere('p.deletedAt IS NULL')
@@ -451,36 +567,7 @@ export class SemesterOperationalWorkflowService {
       .getMany();
 
     return Promise.all(
-      semesters.map(async (s) => {
-        const openObservations = await this.countOpenObservations(s.id);
-        const ready = await this.countFactoryProductionReadySubjects(s.id);
-        const firstSubject = s.subjects?.[0];
-        return {
-          kind: 'semester',
-          semesterId: s.id,
-          semesterNumber: s.semesterNumber,
-          subjectId: firstSubject?.id ?? s.id,
-          subjectName: `Semestre ${s.semesterNumber}`,
-          projectId: s.project.id,
-          program: s.project.program,
-          school: s.project.school,
-          operationalState: s.operationalState,
-          currentResponsibleRole: responsibleRoleForState(s.operationalState),
-          stageDueAt: s.operationalStageDueAt,
-          slaStatus: this.slaService.computeSlaStatus({
-            state: s.operationalState,
-            stageEnteredAt: s.operationalStageEnteredAt,
-            stageDueAt: s.operationalStageDueAt,
-            finalizedAt: s.operationalFinalizedAt,
-          }),
-          availableActions: [],
-          lastReturnReason: s.lastReturnReason,
-          actionUrl: `/projects/${s.project.id}/semesters/${s.id}/operations`,
-          subjectsTotal: s.subjects?.length ?? 0,
-          subjectsReady: ready,
-          openObservations,
-        };
-      }),
+      semesters.map((s) => this.buildSemesterWorkItem(s, user, { availableActions: [] })),
     );
   }
 
@@ -493,8 +580,12 @@ export class SemesterOperationalWorkflowService {
           ...statesPendingForRole(UserRole.PRODUCT),
         ])]
       : statesPendingForRole(user.role);
+    if (states.length === 0) {
+      return [];
+    }
     const qb = this.semesterRepo.createQueryBuilder('sem')
       .innerJoinAndSelect('sem.project', 'p')
+      .leftJoinAndSelect('p.productOwner', 'productOwner')
       .leftJoinAndSelect('sem.subjects', 'subjects', 'subjects.deletedAt IS NULL')
       .where('sem.deletedAt IS NULL')
       .andWhere('p.deletedAt IS NULL')
@@ -503,39 +594,7 @@ export class SemesterOperationalWorkflowService {
     if (user.role === UserRole.PRODUCT) qb.andWhere('p.productOwnerId = :userId', { userId: user.id });
     if (user.role === UserRole.FABRICA) qb.andWhere('(p.factoryOwnerId = :userId OR p.factoryOwnerId IS NULL)', { userId: user.id });
     const semesters = await qb.orderBy('sem.operational_stage_due_at', 'ASC', 'NULLS LAST').addOrderBy('sem.updatedAt', 'DESC').getMany();
-    return Promise.all(semesters.map(async (s) => {
-      const openObservations = await this.countOpenObservations(s.id);
-      const ready = await this.countFactoryProductionReadySubjects(s.id);
-      const firstSubject = s.subjects?.[0];
-      const actions = user.role === UserRole.ADMIN
-        ? allowedActionsForRole(responsibleRoleForState(s.operationalState), s.operationalState)
-        : allowedActionsForRole(user.role, s.operationalState);
-      return {
-        kind: 'semester',
-        semesterId: s.id,
-        semesterNumber: s.semesterNumber,
-        subjectId: firstSubject?.id ?? s.id,
-        subjectName: `Semestre ${s.semesterNumber}`,
-        projectId: s.project.id,
-        program: s.project.program,
-        school: s.project.school,
-        operationalState: s.operationalState,
-        currentResponsibleRole: responsibleRoleForState(s.operationalState),
-        stageDueAt: s.operationalStageDueAt,
-        slaStatus: this.slaService.computeSlaStatus({
-          state: s.operationalState,
-          stageEnteredAt: s.operationalStageEnteredAt,
-          stageDueAt: s.operationalStageDueAt,
-          finalizedAt: s.operationalFinalizedAt,
-        }),
-        availableActions: actions,
-        lastReturnReason: s.lastReturnReason,
-        actionUrl: `/projects/${s.project.id}/semesters/${s.id}/operations`,
-        subjectsTotal: s.subjects?.length ?? 0,
-        subjectsReady: ready,
-        openObservations,
-      };
-    }));
+    return Promise.all(semesters.map((s) => this.buildSemesterWorkItem(s, user)));
   }
 
   async listProgramsForRole(user: UserEntity): Promise<ProgramOperationalWorkItemDto[]> {
@@ -566,8 +625,23 @@ export class SemesterOperationalWorkflowService {
 
     this.assertAccess(semesters[0]!, user);
 
+    await this.syncProjectSemesterClosureIfNeeded(projectId, user);
+
+    const refreshedSemesters = await this.semesterRepo
+      .createQueryBuilder('sem')
+      .innerJoinAndSelect('sem.project', 'p')
+      .leftJoinAndSelect('sem.subjects', 'subjects', 'subjects.deletedAt IS NULL')
+      .leftJoinAndSelect('p.productOwner', 'productOwner')
+      .leftJoinAndSelect('p.factoryOwner', 'factoryOwner')
+      .where('sem.deletedAt IS NULL')
+      .andWhere('p.deletedAt IS NULL')
+      .andWhere('p.legacyWorkflow = false')
+      .andWhere('p.id = :projectId', { projectId })
+      .orderBy('sem.semesterNumber', 'ASC')
+      .getMany();
+
     const items = await Promise.all(
-      semesters.map(async (s) => this.buildSemesterWorkItem(s, user)),
+      refreshedSemesters.map(async (s) => this.buildSemesterWorkItem(s, user)),
     );
     const program = aggregateSemestersToPrograms(items).find((p) => p.projectId === projectId);
     if (!program) {
@@ -579,14 +653,22 @@ export class SemesterOperationalWorkflowService {
   private async buildSemesterWorkItem(
     s: SemesterEntity,
     user: UserEntity,
+    options?: { availableActions?: InstitutionalOperationalAction[] },
   ): Promise<SemesterOperationalWorkItemDto> {
     const openObservations = await this.countOpenObservations(s.id);
     const ready = await this.countFactoryProductionReadySubjects(s.id);
+    const subjectsApproved = (s.subjects ?? []).filter(
+      (subject) =>
+        subject.status === SubjectStatus.APPROVED ||
+        subject.operationalState === InstitutionalOperationalState.PENDING_PROJECT_RADICATION ||
+        subject.operationalState === InstitutionalOperationalState.FINALIZED,
+    ).length;
     const firstSubject = s.subjects?.[0];
     const actions =
-      user.role === UserRole.ADMIN
+      options?.availableActions ??
+      (user.role === UserRole.ADMIN
         ? allowedActionsForRole(responsibleRoleForState(s.operationalState), s.operationalState)
-        : allowedActionsForRole(user.role, s.operationalState);
+        : allowedActionsForRole(user.role, s.operationalState));
     return {
       kind: 'semester',
       semesterId: s.id,
@@ -596,6 +678,7 @@ export class SemesterOperationalWorkflowService {
       projectId: s.project.id,
       program: s.project.program,
       school: s.project.school,
+      productOwnerName: resolveProductOwnerName(s.project),
       operationalState: s.operationalState,
       currentResponsibleRole: responsibleRoleForState(s.operationalState),
       stageDueAt: s.operationalStageDueAt,
@@ -610,6 +693,7 @@ export class SemesterOperationalWorkflowService {
       actionUrl: `/projects/${s.project.id}/semesters/${s.id}/operations`,
       subjectsTotal: s.subjects?.length ?? 0,
       subjectsReady: ready,
+      subjectsApproved,
       openObservations,
     };
   }
@@ -626,6 +710,7 @@ export class SemesterOperationalWorkflowService {
     const qb = this.semesterRepo
       .createQueryBuilder('sem')
       .innerJoinAndSelect('sem.project', 'p')
+      .leftJoinAndSelect('p.productOwner', 'productOwner')
       .leftJoinAndSelect('sem.subjects', 'subjects', 'subjects.deletedAt IS NULL')
       .where('sem.deletedAt IS NULL')
       .andWhere('p.deletedAt IS NULL')
@@ -642,36 +727,7 @@ export class SemesterOperationalWorkflowService {
       .getMany();
 
     return Promise.all(
-      semesters.map(async (s) => {
-        const openObservations = await this.countOpenObservations(s.id);
-        const ready = await this.countFactoryProductionReadySubjects(s.id);
-        const firstSubject = s.subjects?.[0];
-        return {
-          kind: 'semester' as const,
-          semesterId: s.id,
-          semesterNumber: s.semesterNumber,
-          subjectId: firstSubject?.id ?? s.id,
-          subjectName: `Semestre ${s.semesterNumber}`,
-          projectId: s.project.id,
-          program: s.project.program,
-          school: s.project.school,
-          operationalState: s.operationalState,
-          currentResponsibleRole: responsibleRoleForState(s.operationalState),
-          stageDueAt: s.operationalStageDueAt,
-          slaStatus: this.slaService.computeSlaStatus({
-            state: s.operationalState,
-            stageEnteredAt: s.operationalStageEnteredAt,
-            stageDueAt: s.operationalStageDueAt,
-            finalizedAt: s.operationalFinalizedAt,
-          }),
-          availableActions: [],
-          lastReturnReason: s.lastReturnReason,
-          actionUrl: `/projects/${s.project.id}/semesters/${s.id}/operations`,
-          subjectsTotal: s.subjects?.length ?? 0,
-          subjectsReady: ready,
-          openObservations,
-        };
-      }),
+      semesters.map((s) => this.buildSemesterWorkItem(s, user, { availableActions: [] })),
     );
   }
 
@@ -683,7 +739,7 @@ export class SemesterOperationalWorkflowService {
   private async loadSemester(semesterId: string): Promise<SemesterEntity> {
     const semester = await this.semesterRepo.findOne({
       where: { id: semesterId, deletedAt: IsNull() },
-      relations: { project: { productOwner: true, factoryOwner: true }, subjects: true },
+      relations: { project: { productOwner: true, factoryOwner: true } },
     });
     if (!semester) throw new NotFoundException('Semestre no encontrado');
     return semester;
@@ -712,6 +768,170 @@ export class SemesterOperationalWorkflowService {
     if (!readiness.ready) throw new BadRequestException(readiness.blockers.join('; '));
   }
 
+  private async loadSemesterWorkspaceContext(
+    semesterId: string,
+    options?: { includeAcademicRelations?: boolean },
+  ): Promise<SemesterWorkspaceLoadContext> {
+    const includeAcademicRelations = options?.includeAcademicRelations ?? false;
+    const [subjects, observationStats] = await Promise.all([
+      this.subjectRepo.find({
+        where: { semester: { id: semesterId }, deletedAt: IsNull() },
+        ...(includeAcademicRelations
+          ? { relations: { checklist: true, topics: true } }
+          : {}),
+        order: { name: 'ASC' },
+      }),
+      this.observationsService.countObservationStatsForSemester(semesterId),
+    ]);
+
+    return {
+      subjects,
+      unresolvedBySubject: observationStats.unresolvedBySubject,
+      blockingBySubject: observationStats.blockingBySubject,
+    };
+  }
+
+  private buildAcademicBlockersInMemory(
+    subject: SubjectEntity,
+    unresolvedCount: number,
+    blockingCount: number,
+  ): string[] {
+    const blockers: string[] = [];
+    const items = subject.checklist ?? [];
+    const topicsCount = (subject.topics ?? []).filter((topic) => !topic.deletedAt).length;
+
+    if (topicsCount < SUBJECT_TOPICS_MIN || topicsCount > SUBJECT_TOPICS_MAX) {
+      blockers.push(SUBJECT_TOPICS_RANGE_MESSAGE);
+    }
+
+    const productItems = items.filter((item) => item.ownerRole === UserRole.PRODUCT);
+    const factoryItems = items.filter((item) => item.ownerRole === UserRole.FABRICA);
+
+    if (productItems.length === 0 && factoryItems.length === 0) {
+      blockers.push('La asignatura no tiene entregables configurados en el checklist');
+    }
+
+    if (items.some((item) => item.status === ChecklistStatus.RECHAZADO)) {
+      blockers.push('No puede aprobar académicamente mientras existan entregables rechazados');
+    }
+
+    const pendingProduct = productItems.filter((item) => item.status !== ChecklistStatus.APROBADO);
+    if (pendingProduct.length > 0) {
+      blockers.push(
+        `Debe aprobar todos los entregables de Product (${pendingProduct.length} pendiente(s)) antes de la aprobación académica`,
+      );
+    }
+
+    const pendingFactory = factoryItems.filter((item) => item.status !== ChecklistStatus.APROBADO);
+    if (pendingFactory.length > 0) {
+      blockers.push(
+        `Debe aprobar todos los ítems de temas/gránulos (${pendingFactory.length} pendiente(s)) antes de la aprobación académica`,
+      );
+    }
+
+    if (blockingCount > 0) {
+      blockers.push('Aún existen correcciones pendientes por aplicar.');
+    }
+
+    if (unresolvedCount > 0) {
+      blockers.push('Aún existen observaciones pendientes de validación.');
+    }
+
+    return blockers;
+  }
+
+  private buildSubjectSummaries(
+    context: SemesterWorkspaceLoadContext,
+    user: UserEntity,
+    operationalState: InstitutionalOperationalState,
+  ): SemesterSubjectSummary[] {
+    const includeAcademicBlockers =
+      isSemesterProductAcademicReviewPhase(operationalState) &&
+      (user.role === UserRole.PRODUCT || user.role === UserRole.ADMIN);
+
+    return context.subjects.map((subject) => {
+      const openObservationsCount = context.unresolvedBySubject.get(subject.id) ?? 0;
+      const blockers: string[] = includeAcademicBlockers
+        ? this.buildAcademicBlockersInMemory(
+            subject,
+            openObservationsCount,
+            context.blockingBySubject.get(subject.id) ?? 0,
+          )
+        : [];
+
+      if (openObservationsCount > 0 && !includeAcademicBlockers) {
+        blockers.push(
+          openObservationsCount === 1
+            ? '1 observación de Product sin resolver'
+            : `${openObservationsCount} observaciones de Product sin resolver`,
+        );
+      } else if (openObservationsCount > 0 && includeAcademicBlockers) {
+        const hasObsBlocker = blockers.some((b) => b.includes('observaciones'));
+        if (!hasObsBlocker) {
+          blockers.push(
+            openObservationsCount === 1
+              ? '1 observación de Product sin resolver'
+              : `${openObservationsCount} observaciones de Product sin resolver`,
+          );
+        }
+      }
+
+      return {
+        subjectId: subject.id,
+        subjectName: subject.name,
+        status: subject.status,
+        operationalState: subject.operationalState,
+        internalState: this.deriveInternalState(subject, openObservationsCount),
+        progress: subject.progress,
+        blockers,
+        openObservationsCount,
+      };
+    });
+  }
+
+  private computeReadinessFromContext(
+    semester: SemesterEntity,
+    action: InstitutionalOperationalAction | null,
+    context: SemesterWorkspaceLoadContext,
+  ): { ready: boolean; blockers: string[] } {
+    const blockers: string[] = [];
+    const subjects = context.subjects;
+
+    if (subjects.length === 0) blockers.push('El semestre no tiene asignaturas');
+
+    const checkAction = action ?? this.primaryReadinessActionForState(semester.operationalState);
+
+    for (const subject of subjects) {
+      if (!subject.name?.trim()) {
+        blockers.push(`Asignatura sin nombre en semestre ${semester.semesterNumber}`);
+      }
+
+      if (
+        checkAction === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT &&
+        !isSubjectFactoryProductionComplete(subject)
+      ) {
+        blockers.push(`"${subject.name}" no esta producida al 100%`);
+      }
+
+      if (checkAction === InstitutionalOperationalAction.LMS_CONFIRM_UPLOAD && subject.progress < 100) {
+        blockers.push(`"${subject.name}" no tiene evidencia/carga completa`);
+      }
+
+      if (checkAction === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) {
+        const unresolvedCount = context.unresolvedBySubject.get(subject.id) ?? 0;
+        const blockingCount = context.blockingBySubject.get(subject.id) ?? 0;
+        const subjectBlockers = this.buildAcademicBlockersInMemory(
+          subject,
+          unresolvedCount,
+          blockingCount,
+        );
+        subjectBlockers.forEach((b) => blockers.push(`"${subject.name}": ${b}`));
+      }
+    }
+
+    return { ready: blockers.length === 0, blockers: [...new Set(blockers)] };
+  }
+
   private async computeReadiness(
     semester: SemesterEntity,
     action: InstitutionalOperationalAction | null,
@@ -719,34 +939,20 @@ export class SemesterOperationalWorkflowService {
     manager?: EntityManager,
   ): Promise<{ ready: boolean; blockers: string[] }> {
     const subjectRepo = manager?.getRepository(SubjectEntity) ?? this.subjectRepo;
-    const subjects = await subjectRepo.find({ where: { semester: { id: semester.id }, deletedAt: IsNull() } });
-    const blockers: string[] = [];
-    if (subjects.length === 0) blockers.push('El semestre no tiene asignaturas');
-    const checkAction = action ?? this.primaryReadinessActionForState(semester.operationalState);
-    for (const subject of subjects) {
-      if (!subject.name?.trim()) blockers.push(`Asignatura sin nombre en semestre ${semester.semesterNumber}`);
-      if (
-        checkAction === InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT &&
-        !isSubjectFactoryProductionComplete(subject)
-      ) {
-        blockers.push(`"${subject.name}" no esta producida al 100%`);
-      }
-      if (checkAction === InstitutionalOperationalAction.LMS_CONFIRM_UPLOAD && subject.progress < 100) {
-        blockers.push(`"${subject.name}" no tiene evidencia/carga completa`);
-      }
-      if (checkAction === InstitutionalOperationalAction.PRODUCT_APPROVE_ACADEMIC) {
-        const subjectBlockers = await this.subjectsService.getAcademicApprovalBlockers(subject.id, user);
-        subjectBlockers.forEach((b) => blockers.push(`"${subject.name}": ${b}`));
-        const obsManager = manager ?? this.semesterRepo.manager;
-        if (await this.observationsService.hasBlockingObservationsForSubject(subject.id, obsManager)) {
-          blockers.push(`"${subject.name}" tiene observaciones bloqueantes`);
-        }
-        if (await this.observationsService.hasUnresolvedObservationsForSubject(subject.id, obsManager)) {
-          blockers.push(`"${subject.name}" tiene observaciones sin resolver`);
-        }
-      }
-    }
-    return { ready: blockers.length === 0, blockers: [...new Set(blockers)] };
+    const subjects = await subjectRepo.find({
+      where: { semester: { id: semester.id }, deletedAt: IsNull() },
+      relations: { checklist: true, topics: true },
+    });
+    const observationStats = await this.observationsService.countObservationStatsForSemester(
+      semester.id,
+      manager ?? this.semesterRepo.manager,
+    );
+
+    return this.computeReadinessFromContext(semester, action, {
+      subjects,
+      unresolvedBySubject: observationStats.unresolvedBySubject,
+      blockingBySubject: observationStats.blockingBySubject,
+    });
   }
 
   private primaryReadinessActionForState(state: InstitutionalOperationalState): InstitutionalOperationalAction | null {
@@ -787,12 +993,16 @@ export class SemesterOperationalWorkflowService {
   }
 
   private checkKeyForState(next: InstitutionalOperationalState): OperationalCheckKey | null {
+    const reduced = isReducedInstitutionalFlow();
     switch (next) {
       case InstitutionalOperationalState.PENDING_FACTORY: return OperationalCheckKey.PLANNING_INITIAL_VALIDATED;
       case InstitutionalOperationalState.PENDING_PLANNING_PRODUCTION_VALIDATION: return OperationalCheckKey.FACTORY_CONTENT_DELIVERED;
       case InstitutionalOperationalState.PENDING_LMS_UPLOAD: return OperationalCheckKey.PLANNING_PRODUCTION_VALIDATED;
       case InstitutionalOperationalState.PENDING_PLANNING_LMS_VALIDATION: return OperationalCheckKey.LMS_UPLOAD_COMPLETED;
-      case InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW: return OperationalCheckKey.PLANNING_LMS_VALIDATED;
+      case InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW:
+        return reduced
+          ? OperationalCheckKey.FACTORY_CONTENT_DELIVERED
+          : OperationalCheckKey.PLANNING_LMS_VALIDATED;
       case InstitutionalOperationalState.PENDING_PROJECT_RADICATION: return OperationalCheckKey.PRODUCT_ACADEMIC_APPROVED;
       case InstitutionalOperationalState.FINALIZED: return OperationalCheckKey.PLANNING_FINAL_RADICATED;
       default: return null;
@@ -814,6 +1024,7 @@ export class SemesterOperationalWorkflowService {
   }
 
   private async dispatchSideEffects(semester: SemesterEntity, dto: OperationalTransitionDto, user: UserEntity, manager: EntityManager): Promise<void> {
+    const reduced = isReducedInstitutionalFlow();
     const title = `Semestre ${semester.semesterNumber}`;
     const url = `/projects/${semester.project.id}/semesters/${semester.id}/operations`;
     const notify = (role: UserRole, message: string, eventType: NotificationEventType) =>
@@ -830,6 +1041,19 @@ export class SemesterOperationalWorkflowService {
         await notify(UserRole.FABRICA, `Planeacion valido el semestre ${semester.semesterNumber}.`, NotificationEventType.INSTITUTIONAL_PLANNING_VALIDATED_INITIAL);
         break;
       case InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT:
+        if (reduced) {
+          if (semester.project.productOwner?.id) {
+            await this.notificationsService.notifyUser(semester.project.productOwner.id, {
+              type: NotificationType.INFO,
+              title,
+              message: `Fabrica finalizo produccion del semestre ${semester.semesterNumber}.`,
+              projectId: semester.project.id,
+              eventType: NotificationEventType.INSTITUTIONAL_FACTORY_DELIVERED,
+              actionUrl: url,
+            }, manager);
+          }
+          break;
+        }
         await notify(UserRole.PLANEACION, `Fabrica finalizo produccion del semestre ${semester.semesterNumber}.`, NotificationEventType.INSTITUTIONAL_FACTORY_DELIVERED);
         break;
       case InstitutionalOperationalAction.PLANNING_VALIDATE_PRODUCTION:
@@ -874,42 +1098,6 @@ export class SemesterOperationalWorkflowService {
         await repo.save(repo.create({ semester: { id: semesterId }, checkKey: def.key, label: def.label, status: OperationalCheckStatus.PENDING }));
       }
     });
-  }
-
-  private async loadSubjectSummaries(
-    semesterId: string,
-    user: UserEntity,
-    operationalState: InstitutionalOperationalState,
-  ): Promise<SemesterSubjectSummary[]> {
-    const includeAcademicBlockers =
-      isSemesterProductAcademicReviewPhase(operationalState) &&
-      (user.role === UserRole.PRODUCT || user.role === UserRole.ADMIN);
-    const subjects = await this.subjectRepo.find({ where: { semester: { id: semesterId }, deletedAt: IsNull() }, order: { name: 'ASC' } });
-    return Promise.all(subjects.map(async (subject) => {
-      const blockers: string[] = includeAcademicBlockers
-        ? await this.subjectsService.getAcademicApprovalBlockers(subject.id, user).catch(() => [])
-        : [];
-      const openObservationsCount = await this.observationsService
-        .countUnresolvedObservationsForSubject(subject.id, this.semesterRepo.manager)
-        .catch(() => 0);
-      if (openObservationsCount > 0) {
-        blockers.push(
-          openObservationsCount === 1
-            ? '1 observación de Product sin resolver'
-            : `${openObservationsCount} observaciones de Product sin resolver`,
-        );
-      }
-      return {
-        subjectId: subject.id,
-        subjectName: subject.name,
-        status: subject.status,
-        operationalState: subject.operationalState,
-        internalState: this.deriveInternalState(subject, openObservationsCount),
-        progress: subject.progress,
-        blockers,
-        openObservationsCount,
-      };
-    }));
   }
 
   private deriveInternalState(subject: SubjectEntity, openObservationsCount: number): string {

@@ -29,6 +29,7 @@ import { UserEntity } from '../users/user.entity';
 import { ObservationBatchResponseDto } from './dto/observation-batch-response.dto';
 import { ObservationBatchEntity } from './observation-batch.entity';
 import { ObservationEntity } from './observation.entity';
+import { ObservationsService } from './observations.service';
 
 @Injectable()
 export class ObservationBatchesService {
@@ -37,6 +38,8 @@ export class ObservationBatchesService {
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => ProjectsService))
     private readonly projectsService: ProjectsService,
+    @Inject(forwardRef(() => ObservationsService))
+    private readonly observationsService: ObservationsService,
     private readonly auditService: AuditService,
     private readonly statusHistoryService: StatusHistoryService,
     private readonly notificationsService: NotificationsService,
@@ -178,49 +181,67 @@ export class ObservationBatchesService {
       this.projectsService.assertCanModifyProject(subject.project, user);
 
       const observationRepo = manager.getRepository(ObservationEntity);
-      const openBlocking = await observationRepo.count({
-        where: {
-          subject: { id: subjectId },
-          role: UserRole.PRODUCT,
-          status: ObservationStatus.ABIERTA,
-          notificationStatus: ObservationNotificationStatus.SENT,
+      if (!observationIds?.length) {
+        throw new BadRequestException('Selecciona al menos una corrección para enviar a Product.');
+      }
+
+      const idSet = new Set(observationIds);
+      const subjectObservations = await observationRepo.find({
+        where: { subject: { id: subjectId } },
+        relations: {
+          checklistItem: true,
+          topic: true,
+          project: { productOwner: true, factoryOwner: true },
+          subject: { semester: true },
         },
+        order: { updatedAt: 'ASC' },
       });
-      if (openBlocking > 0) {
+      const selectedObservations = subjectObservations.filter((observation) => idSet.has(observation.id));
+
+      if (selectedObservations.length !== observationIds.length) {
         throw new BadRequestException(
-          'Aún existen observaciones abiertas sin corregir. Aplícalas antes de notificar a Product.',
+          'Algunas correcciones seleccionadas no existen en esta asignatura.',
         );
       }
 
-      const pendingCorrections = await observationRepo.find({
-        where: {
-          subject: { id: subjectId },
-          status: ObservationStatus.EN_CORRECCION,
-          correctionNotificationStatus: ObservationNotificationStatus.PENDING,
-        },
-        relations: { checklistItem: true, topic: true },
-        order: { updatedAt: 'ASC' },
-      });
+      const toNotify: ObservationEntity[] = [];
 
-      let toNotify = pendingCorrections;
-      if (observationIds?.length) {
-        const idSet = new Set(observationIds);
-        toNotify = pendingCorrections.filter((o) => idSet.has(o.id));
-        if (toNotify.length === 0) {
-          throw new BadRequestException(
-            'Ninguna de las correcciones seleccionadas está lista para notificar a Product.',
+      for (const observation of selectedObservations) {
+        if (
+          observation.status === ObservationStatus.ABIERTA &&
+          observation.notificationStatus === ObservationNotificationStatus.SENT
+        ) {
+          const marked = await this.observationsService.markCorrectionAppliedInTransaction(
+            observation.id,
+            user,
+            manager,
           );
+          toNotify.push(marked);
+          continue;
         }
-        const invalid = observationIds.filter((id) => !pendingCorrections.some((o) => o.id === id));
-        if (invalid.length > 0) {
-          throw new BadRequestException(
-            'Algunas correcciones seleccionadas no están marcadas como listas o ya fueron notificadas.',
-          );
+
+        if (
+          observation.status === ObservationStatus.EN_CORRECCION &&
+          observation.correctionNotificationStatus === ObservationNotificationStatus.PENDING
+        ) {
+          toNotify.push(observation);
+          continue;
         }
+
+        if (
+          observation.status === ObservationStatus.EN_CORRECCION &&
+          observation.correctionNotificationStatus === ObservationNotificationStatus.SENT
+        ) {
+          throw new BadRequestException('Una corrección seleccionada ya fue notificada a Product.');
+        }
+
+        throw new BadRequestException(
+          'Algunas correcciones seleccionadas no están listas para enviar a Product.',
+        );
       }
 
       if (toNotify.length === 0) {
-        throw new BadRequestException('No hay correcciones pendientes de notificar a Product.');
+        throw new BadRequestException('No hay correcciones listas para notificar a Product.');
       }
 
       const now = new Date();

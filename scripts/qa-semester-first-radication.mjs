@@ -113,6 +113,7 @@ async function main() {
     subjectMatterExpertType: 'INTERNAL',
     requestType: 'NUEVO',
     priority: 'MEDIUM',
+    expectedDeliveryDate: '2026-09-15T00:00:00.000Z',
     semesters: [
       { semesterNumber: 1, subjects: [{ name: 'QA S1 A' }, { name: 'QA S1 B' }] },
       { semesterNumber: 2, subjects: [{ name: 'QA S2 A' }, { name: 'QA S2 B' }] },

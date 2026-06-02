@@ -125,6 +125,12 @@ export class ProjectRadicationReadinessService {
       }
     }
 
+    const obsManager = manager ?? this.subjectRepo.manager;
+    const observationStats = await this.observationsService.countObservationStatsForRadicationScope(
+      projectId,
+      obsManager,
+    );
+
     for (const subject of scopeSubjects) {
       const semNum = subject.semester.semesterNumber;
       if (!bySemesterMap.has(semNum)) {
@@ -165,11 +171,10 @@ export class ProjectRadicationReadinessService {
         blockers.push(`"${subject.name}" pendiente de aprobación académica`);
       }
 
-      const obsManager = manager ?? this.subjectRepo.manager;
-      if (await this.observationsService.hasBlockingObservationsForSubject(subject.id, obsManager)) {
+      if ((observationStats.blockingBySubject.get(subject.id) ?? 0) > 0) {
         blockers.push(`"${subject.name}" tiene observaciones bloqueantes`);
       }
-      if (await this.observationsService.hasUnresolvedObservationsForSubject(subject.id, obsManager)) {
+      if ((observationStats.unresolvedBySubject.get(subject.id) ?? 0) > 0) {
         blockers.push(`"${subject.name}" tiene observaciones sin resolver`);
       }
     }
@@ -232,20 +237,22 @@ export class ProjectRadicationReadinessService {
   async recalculateAndUpdateProjectState(
     projectId: string,
     manager: EntityManager,
-    actorId?: string,
-  ): Promise<void> {
+    _actorId?: string,
+  ): Promise<ProjectRadicationReadinessDto> {
     const projectRepository = manager.getRepository(ProjectEntity);
     const project = await projectRepository.findOne({
       where: { id: projectId, deletedAt: IsNull() },
     });
-    if (!project || !this.usesProjectRadication(project)) return;
+    if (!project || !this.usesProjectRadication(project)) {
+      return this.getReadiness(projectId, manager);
+    }
 
     if (
       project.institutionalState === ProjectInstitutionalState.FINALIZED ||
       project.institutionalState === ProjectInstitutionalState.PENDING_PLANNING_RADICATION_CHECK ||
       project.institutionalState === ProjectInstitutionalState.RADICATION_RETURNED_TO_PRODUCT
     ) {
-      return;
+      return this.getReadiness(projectId, manager);
     }
 
     const readiness = await this.getReadiness(projectId, manager);
@@ -281,6 +288,8 @@ export class ProjectRadicationReadinessService {
         { institutionalState: ProjectInstitutionalState.INSTITUTIONAL_IN_PROGRESS },
       );
     }
+
+    return readiness;
   }
 
   private productRadicationBusinessDays(): number {

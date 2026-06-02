@@ -22,6 +22,7 @@ import {
   LmsSubjectPreviewDto,
 } from './dto/lms-dashboard-summary.dto';
 import { labelLmsActivityAction } from './lms-action-labels';
+import { isReducedInstitutionalFlow } from '../institutional-workflow/institutional-workflow.config';
 
 const LMS_QUEUE_STATES: InstitutionalOperationalState[] = [
   InstitutionalOperationalState.PENDING_LMS_UPLOAD,
@@ -60,6 +61,22 @@ export class LmsDashboardService {
 
   async getSummary(user: UserEntity): Promise<LmsDashboardSummaryDto> {
     this.assertLmsAccess(user);
+
+    if (isReducedInstitutionalFlow()) {
+      return {
+        kpis: {
+          pendingUpload: 0,
+          inUpload: 0,
+          completedUpload: 0,
+          returnedByPlanning: 0,
+          inProgressProjects: 0,
+          finalizedProjects: 0,
+        },
+        recentActivity: [],
+        returnedPreview: [],
+        completedPreview: [],
+      };
+    }
 
     const [kpis, recentActivity, returnedPreview, completedPreview] = await Promise.all([
       this.loadKpis(),

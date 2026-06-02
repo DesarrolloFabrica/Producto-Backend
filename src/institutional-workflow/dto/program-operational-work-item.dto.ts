@@ -59,6 +59,9 @@ export class ProgramOperationalWorkItemDto {
   @ApiProperty()
   actionUrl!: string;
 
+  @ApiProperty({ nullable: true, description: 'Responsable Product que creó la solicitud' })
+  productOwnerName!: string | null;
+
   @ApiProperty({
     description: 'Semestres del programa para drill-down',
     isArray: true,

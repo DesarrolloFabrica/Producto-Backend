@@ -15,6 +15,22 @@ function resolveSslOptions(url: string): boolean | TlsOptions | undefined {
   return undefined;
 }
 
+function isRemoteDatabase(url: string): boolean {
+  return !/localhost|127\.0\.0\.1/i.test(url);
+}
+
+function buildPgPoolExtra(url: string): Record<string, unknown> {
+  const remote = isRemoteDatabase(url);
+  return {
+    max: remote ? 8 : 10,
+    // Cloud SQL / hosts remotos suelen cerrar conexiones idle; reciclar antes.
+    idleTimeoutMillis: remote ? 30_000 : 60_000,
+    connectionTimeoutMillis: remote ? 25_000 : 10_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+  };
+}
+
 export function buildDataSourceOptions(): DataSourceOptions {
   const isProd = process.env.NODE_ENV === 'production';
   const url = process.env.DATABASE_URL;
@@ -31,7 +47,7 @@ export function buildDataSourceOptions(): DataSourceOptions {
     url,
     ...(ssl !== undefined ? { ssl } : {}),
     synchronize: false,
-    connectTimeoutMS: 10000,
+    extra: buildPgPoolExtra(url),
     logging: isProd ? ['error', 'warn'] : ['error', 'warn', 'schema'],
     migrationsTableName: 'typeorm_migrations',
     migrations: ['dist/database/migrations/*.js'],
@@ -39,11 +55,13 @@ export function buildDataSourceOptions(): DataSourceOptions {
 }
 
 export function buildDatabaseOptions(): TypeOrmModuleOptions {
+  const url = process.env.DATABASE_URL ?? '';
+  const remote = isRemoteDatabase(url);
   return {
     ...buildDataSourceOptions(),
     entities: ALL_ENTITIES,
     autoLoadEntities: true,
-    retryAttempts: 1,
-    retryDelay: 1000,
+    retryAttempts: remote ? 5 : 2,
+    retryDelay: remote ? 3000 : 1000,
   };
 }

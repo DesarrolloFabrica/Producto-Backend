@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
+  ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -123,6 +124,22 @@ export class ObservationsController {
     @CurrentUser() user: UserEntity,
   ): Promise<UpdateObservationStatusResponseDto> {
     return await this.observationsService.reopen(id, dto.reason, user);
+  }
+
+  @Delete('observations/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.PRODUCT, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Eliminar borrador de observación de Product (aún no enviado a Fábrica)' })
+  @ApiNoContentResponse()
+  @ApiUnauthorizedResponse()
+  @ApiForbiddenResponse()
+  @ApiNotFoundResponse()
+  async deleteDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<void> {
+    await this.observationsService.deleteDraft(id, user);
   }
 
   @Post('subjects/:subjectId/observation-batches/send-to-factory')

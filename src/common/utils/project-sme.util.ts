@@ -1,7 +1,6 @@
 import { FACTORY_DELIVERY_BUSINESS_DAYS } from '../constants/factory-delivery.constants';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { SubjectMatterExpertStatus } from '../enums/subject-matter-expert-status.enum';
-import { SubjectMatterExpertType } from '../enums/subject-matter-expert-type.enum';
 import { addBusinessDays } from './business-days.util';
 
 export interface ProjectActivationPlan {
@@ -20,29 +19,16 @@ export function isProjectActiveForFactory(
 }
 
 export function resolveActivationOnCreate(
-  subjectMatterExpertType: SubjectMatterExpertType,
+  expectedDeliveryDate: Date,
   referenceDate: Date = new Date(),
 ): ProjectActivationPlan {
-  const isInternal = subjectMatterExpertType === SubjectMatterExpertType.INTERNAL;
-
-  if (isInternal) {
-    return {
-      subjectMatterExpertStatus: SubjectMatterExpertStatus.READY,
-      activatedAt: referenceDate,
-      expertConfirmedAt: referenceDate,
-      expectedDeliveryDate: addBusinessDays(referenceDate, FACTORY_DELIVERY_BUSINESS_DAYS),
-      status: ProjectStatus.READY_FOR_PRODUCTION,
-      shouldNotifyFactory: true,
-    };
-  }
-
   return {
-    subjectMatterExpertStatus: SubjectMatterExpertStatus.PENDING,
-    activatedAt: null,
-    expertConfirmedAt: null,
-    expectedDeliveryDate: null,
-    status: ProjectStatus.PENDING_SUBJECT_MATTER_EXPERT,
-    shouldNotifyFactory: false,
+    subjectMatterExpertStatus: SubjectMatterExpertStatus.READY,
+    activatedAt: referenceDate,
+    expertConfirmedAt: referenceDate,
+    expectedDeliveryDate,
+    status: ProjectStatus.READY_FOR_PRODUCTION,
+    shouldNotifyFactory: true,
   };
 }
 

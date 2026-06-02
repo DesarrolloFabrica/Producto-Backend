@@ -19,6 +19,7 @@
     "qa:email:real-dry-run": "node scripts/qa-email-real-dry-run.mjs",
     "db:deactivate-local-users": "node scripts/deactivate-local-seed-users.mjs",
     "qa:email:product-request": "node scripts/qa-email-product-request-created.mjs",
+    "qa:reduced-flow": "node scripts/qa-reduced-flow.mjs",
     "check:email-config": "node scripts/check-email-config.mjs",
     "check:email-config:verify": "node scripts/check-email-config.mjs --verify"
   },

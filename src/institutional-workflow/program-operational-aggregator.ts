@@ -58,8 +58,16 @@ export function operationalStateStageBucket(state: InstitutionalOperationalState
   }
 }
 
-function isSemesterProductionComplete(item: SemesterOperationalWorkItemDto): boolean {
-  return item.subjectsTotal > 0 && item.subjectsReady >= item.subjectsTotal;
+function isSemesterAcademicallyComplete(item: SemesterOperationalWorkItemDto): boolean {
+  return (
+    item.operationalState === InstitutionalOperationalState.PENDING_PROJECT_RADICATION ||
+    item.operationalState === InstitutionalOperationalState.FINALIZED
+  );
+}
+
+function countApprovedSubjects(item: SemesterOperationalWorkItemDto): number {
+  if (isSemesterAcademicallyComplete(item)) return item.subjectsTotal;
+  return item.subjectsApproved ?? 0;
 }
 
 function worstSlaStatus(statuses: SlaStatus[]): SlaStatus {
@@ -111,8 +119,8 @@ export function aggregateSemestersToPrograms(
     );
     const first = sortedSemesters[0]!;
     const totalSubjects = sortedSemesters.reduce((sum, s) => sum + s.subjectsTotal, 0);
-    const completedSubjects = sortedSemesters.reduce((sum, s) => sum + s.subjectsReady, 0);
-    const completedSemesters = sortedSemesters.filter(isSemesterProductionComplete).length;
+    const completedSubjects = sortedSemesters.reduce((sum, s) => sum + countApprovedSubjects(s), 0);
+    const completedSemesters = sortedSemesters.filter(isSemesterAcademicallyComplete).length;
     const academicReviewPendingCount = sortedSemesters.filter((s) =>
       ACADEMIC_REVIEW_STATES.has(s.operationalState),
     ).length;
@@ -130,6 +138,7 @@ export function aggregateSemestersToPrograms(
       projectId,
       program: first.program,
       school: first.school,
+      productOwnerName: first.productOwnerName ?? null,
       totalSemesters: sortedSemesters.length,
       completedSemesters,
       totalSubjects,

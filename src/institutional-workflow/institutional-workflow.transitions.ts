@@ -1,6 +1,7 @@
 import { InstitutionalOperationalAction } from '../common/enums/institutional-operational-action.enum';
 import { InstitutionalOperationalState } from '../common/enums/institutional-operational-state.enum';
 import { UserRole } from '../common/enums/user-role.enum';
+import { isReducedInstitutionalFlow } from './institutional-workflow.config';
 
 const RETURN_ACTIONS = new Set<InstitutionalOperationalAction>([
   InstitutionalOperationalAction.PLANNING_RETURN_INITIAL,
@@ -17,6 +18,7 @@ export function resolveNextInstitutionalState(params: {
   action: InstitutionalOperationalAction;
 }): InstitutionalOperationalState | null {
   const { current, action } = params;
+  const reduced = isReducedInstitutionalFlow();
   switch (action) {
     case InstitutionalOperationalAction.PLANNING_VALIDATE_INITIAL:
       if (
@@ -47,6 +49,9 @@ export function resolveNextInstitutionalState(params: {
       return null;
     case InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT:
       if (current === InstitutionalOperationalState.IN_FACTORY_PRODUCTION) {
+        if (reduced) {
+          return InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW;
+        }
         return InstitutionalOperationalState.PENDING_PLANNING_PRODUCTION_VALIDATION;
       }
       return null;
@@ -112,14 +117,16 @@ export function resolveNextInstitutionalState(params: {
 export function responsibleRoleForState(
   state: InstitutionalOperationalState,
 ): UserRole {
+  const reduced = isReducedInstitutionalFlow();
   switch (state) {
     case InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION:
     case InstitutionalOperationalState.PENDING_PLANNING_PRODUCTION_VALIDATION:
     case InstitutionalOperationalState.PENDING_PLANNING_LMS_VALIDATION:
+      return UserRole.PLANEACION;
     case InstitutionalOperationalState.PENDING_PROJECT_RADICATION:
-      return UserRole.PLANEACION;
+      return reduced ? UserRole.PRODUCT : UserRole.PLANEACION;
     case InstitutionalOperationalState.FINALIZED:
-      return UserRole.PLANEACION;
+      return reduced ? UserRole.PRODUCT : UserRole.PLANEACION;
     case InstitutionalOperationalState.RETURNED_TO_PRODUCT_FROM_PLANNING:
     case InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW:
     case InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW:
@@ -166,9 +173,21 @@ export function isSemesterProductAcademicReviewPhase(
   );
 }
 
+/** Revisión académica del semestre cerrada; la radicación (si aplica) es a nivel programa. */
+export function isSemesterAcademicallyComplete(
+  state: InstitutionalOperationalState,
+): boolean {
+  return (
+    state === InstitutionalOperationalState.PENDING_PROJECT_RADICATION ||
+    state === InstitutionalOperationalState.FINALIZED
+  );
+}
+
 export function statesPendingForRole(role: UserRole): InstitutionalOperationalState[] {
+  const reduced = isReducedInstitutionalFlow();
   switch (role) {
     case UserRole.PLANEACION:
+      if (reduced) return [];
       return [
         InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION,
         InstitutionalOperationalState.PENDING_PLANNING_PRODUCTION_VALIDATION,
@@ -182,13 +201,20 @@ export function statesPendingForRole(role: UserRole): InstitutionalOperationalSt
         InstitutionalOperationalState.CHANGES_REQUESTED_BY_PRODUCT,
       ];
     case UserRole.LMS:
+      if (reduced) return [];
       return [
         InstitutionalOperationalState.PENDING_LMS_UPLOAD,
         InstitutionalOperationalState.IN_LMS_UPLOAD,
         InstitutionalOperationalState.RETURNED_TO_LMS_FROM_PLANNING,
       ];
     case UserRole.PRODUCT:
-      return [
+      return reduced
+        ? [
+            InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW,
+            InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW,
+            InstitutionalOperationalState.CHANGES_REQUESTED_BY_PRODUCT,
+          ]
+        : [
         InstitutionalOperationalState.RETURNED_TO_PRODUCT_FROM_PLANNING,
         InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW,
         InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW,
@@ -207,11 +233,12 @@ export function allowedActionsForRole(
   role: UserRole,
   state: InstitutionalOperationalState,
 ): InstitutionalOperationalAction[] {
+  const reduced = isReducedInstitutionalFlow();
   if (role === UserRole.ADMIN) {
     return allActionsForState(state);
   }
   const actions: InstitutionalOperationalAction[] = [];
-  if (role === UserRole.PLANEACION) {
+  if (role === UserRole.PLANEACION && !reduced) {
     if (state === InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION) {
       actions.push(
         InstitutionalOperationalAction.PLANNING_VALIDATE_INITIAL,
@@ -243,7 +270,7 @@ export function allowedActionsForRole(
       actions.push(InstitutionalOperationalAction.FACTORY_DELIVER_CONTENT);
     }
   }
-  if (role === UserRole.LMS) {
+  if (role === UserRole.LMS && !reduced) {
     if (
       state === InstitutionalOperationalState.PENDING_LMS_UPLOAD ||
       state === InstitutionalOperationalState.RETURNED_TO_LMS_FROM_PLANNING

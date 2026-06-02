@@ -36,6 +36,10 @@ export function aggregateFactoryItemsToPrograms(
     const completedSubjects = sorted.reduce((sum, s) => sum + (s.subjectsReady ?? 0), 0);
     const completedSemesters = sorted.filter(isSemesterProductionComplete).length;
 
+    const approvedCount = sorted.filter(
+      (s) => s.operationalState === SubjectOperationalState.APPROVED,
+    ).length;
+
     const stageCounts = new Map<string, number>();
     for (const sem of sorted) {
       if (sem.operationalState === SubjectOperationalState.APPROVED) continue;
@@ -45,6 +49,11 @@ export function aggregateFactoryItemsToPrograms(
     const activeStageSummary = [...stageCounts.entries()]
       .map(([label, count]) => ({ label, count }))
       .sort((a, b) => b.count - a.count);
+
+    if (approvedCount > 0) {
+      activeStageSummary.push({ label: 'Completadas', count: approvedCount });
+      activeStageSummary.sort((a, b) => b.count - a.count);
+    }
 
     const dueDates = sorted
       .map((s) => s.expectedDeliveryDate)

@@ -73,7 +73,7 @@ export class CreateProjectSemesterDto {
 
   @ApiPropertyOptional({
     example: '2026-08-15T00:00:00.000Z',
-    description: 'Ignorado en creación; el backend calcula la fecha al activar la solicitud.',
+    description: 'Ignorado en creación; se usa la fecha estimada del proyecto.',
   })
   @IsOptional()
   @IsISO8601()
@@ -101,9 +101,10 @@ export class CreateProjectDto {
   @IsEnum(Modality)
   modality!: Modality;
 
-  @ApiProperty({ enum: SubjectMatterExpertType, example: SubjectMatterExpertType.INTERNAL })
+  @ApiPropertyOptional({ enum: SubjectMatterExpertType, example: SubjectMatterExpertType.INTERNAL })
+  @IsOptional()
   @IsEnum(SubjectMatterExpertType)
-  subjectMatterExpertType!: SubjectMatterExpertType;
+  subjectMatterExpertType?: SubjectMatterExpertType;
 
   @ApiProperty()
   @IsString()
@@ -114,13 +115,13 @@ export class CreateProjectDto {
   @IsEnum(Priority)
   priority!: Priority;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: '2026-12-31T00:00:00.000Z',
-    description: 'Ignorado en creación; el backend calcula la fecha al activar la solicitud.',
+    description: 'Fecha estimada de entrega acordada para la solicitud.',
   })
-  @IsOptional()
   @IsISO8601()
-  expectedDeliveryDate?: string;
+  @IsNotEmpty()
+  expectedDeliveryDate!: string;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()

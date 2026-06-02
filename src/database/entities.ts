@@ -1,3 +1,4 @@
+import { SchoolEntity } from '../catalogs/school.entity';
 import { AuditLogEntity } from '../audit/audit-log.entity';
 import { StatusHistoryEntity } from '../audit/status-history.entity';
 import { ChecklistItemEntity } from '../checklist/checklist-item.entity';
@@ -16,6 +17,7 @@ import { TopicEntity } from '../topics/topic.entity';
 import { UserEntity } from '../users/user.entity';
 
 export const ALL_ENTITIES = [
+  SchoolEntity,
   UserEntity,
   ProjectEntity,
   SemesterEntity,

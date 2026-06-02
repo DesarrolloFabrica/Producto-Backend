@@ -183,6 +183,7 @@ export class FactoryDashboardService {
       case InstitutionalOperationalState.CHANGES_REQUESTED_BY_PRODUCT:
         return SubjectOperationalState.CHANGES_REQUESTED;
       case InstitutionalOperationalState.FINALIZED:
+      case InstitutionalOperationalState.PENDING_PROJECT_RADICATION:
         return SubjectOperationalState.APPROVED;
       case InstitutionalOperationalState.PENDING_PLANNING_INITIAL_VALIDATION:
       case InstitutionalOperationalState.PENDING_PLANNING_PRODUCTION_VALIDATION:
@@ -193,7 +194,6 @@ export class FactoryDashboardService {
       case InstitutionalOperationalState.PENDING_PRODUCT_ACADEMIC_REVIEW:
       case InstitutionalOperationalState.IN_PRODUCT_ACADEMIC_REVIEW:
       case InstitutionalOperationalState.RETURNED_TO_PRODUCT_FROM_PLANNING:
-      case InstitutionalOperationalState.PENDING_PROJECT_RADICATION:
         return SubjectOperationalState.IN_REVIEW;
       default:
         return SubjectOperationalState.IN_REVIEW;

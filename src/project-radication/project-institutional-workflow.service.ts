@@ -51,6 +51,7 @@ import { ProjectOperationalTransitionEntity } from './project-operational-transi
 import { ProjectRadicationEntity } from './project-radication.entity';
 import { ProjectRadicationReadinessService } from './project-radication-readiness.service';
 import { SemesterOperationalWorkflowService } from '../institutional-workflow/semester-operational-workflow.service';
+import { isReducedInstitutionalFlow } from '../institutional-workflow/institutional-workflow.config';
 
 @Injectable()
 export class ProjectInstitutionalWorkflowService {
@@ -82,7 +83,17 @@ export class ProjectInstitutionalWorkflowService {
   async getReadiness(projectId: string, user: UserEntity): Promise<ProjectRadicationReadinessDto> {
     const project = await this.loadProject(projectId);
     this.assertCanView(project, user);
-    await this.projectRepo.manager.transaction(async (manager) => {
+
+    const readOnlyState =
+      project.institutionalState === ProjectInstitutionalState.FINALIZED ||
+      project.institutionalState === ProjectInstitutionalState.PENDING_PLANNING_RADICATION_CHECK ||
+      project.institutionalState === ProjectInstitutionalState.READY_FOR_PRODUCT_RADICATION;
+
+    if (readOnlyState) {
+      return this.readinessService.getReadiness(projectId);
+    }
+
+    return this.projectRepo.manager.transaction(async (manager) => {
       try {
         await this.semesterOperationalWorkflow.syncSemestersWhenAllSubjectsReadyForRadication(
           projectId,
@@ -95,9 +106,8 @@ export class ProjectInstitutionalWorkflowService {
           `Sync de cierre académico omitido para proyecto ${projectId}: ${message}`,
         );
       }
-      await this.readinessService.recalculateAndUpdateProjectState(projectId, manager, user.id);
+      return this.readinessService.recalculateAndUpdateProjectState(projectId, manager, user.id);
     });
-    return this.readinessService.getReadiness(projectId);
   }
 
   async getInstitutionalClosure(
@@ -316,7 +326,10 @@ export class ProjectInstitutionalWorkflowService {
 
       const radicatedAt = new Date(dto.radicatedAt);
       const fromState = project.institutionalState;
-      const toState = ProjectInstitutionalState.PENDING_PLANNING_RADICATION_CHECK;
+      const reduced = isReducedInstitutionalFlow();
+      const toState = reduced
+        ? ProjectInstitutionalState.FINALIZED
+        : ProjectInstitutionalState.PENDING_PLANNING_RADICATION_CHECK;
       const planningDays = this.planningCheckBusinessDays();
 
       await this.supersedeActiveRadications(projectId, manager);
@@ -330,11 +343,100 @@ export class ProjectInstitutionalWorkflowService {
           registeredBy: { id: user.id },
           comment: dto.comment?.trim() ?? null,
           evidenceUrl: dto.evidenceUrl?.trim() ?? null,
-          status: ProjectRadicationStatus.ACTIVE,
+          status: reduced ? ProjectRadicationStatus.VALIDATED : ProjectRadicationStatus.ACTIVE,
+          validatedAt: reduced ? radicatedAt : null,
+          validatedBy: reduced ? ({ id: user.id } as UserEntity) : null,
         }),
       );
 
       const projectRepo = manager.getRepository(ProjectEntity);
+      if (reduced) {
+        await projectRepo.update(projectId, {
+          institutionalState: toState,
+          status: ProjectStatus.CLOSED,
+          radicationNumber: dto.radicationNumber.trim(),
+          radicatedAt,
+          radicatedBy: { id: user.id },
+          radicationComment: dto.comment?.trim() ?? null,
+          radicationEvidenceUrl: dto.evidenceUrl?.trim() ?? null,
+          planningRadicationCheckDueAt: null,
+          lastRadicationReturnReason: null,
+          lastRadicationReturnedAt: null,
+        });
+
+        await this.finalizeOperationalScope(projectId, user, manager, radicatedAt);
+
+        await this.recordProjectTransition(manager, {
+          projectId,
+          fromState,
+          toState,
+          action: ProjectInstitutionalAction.PRODUCT_REGISTER_RADICATION,
+          user,
+          comment: dto.comment ?? null,
+          evidenceUrl: dto.evidenceUrl ?? null,
+          radicationNumber: dto.radicationNumber.trim(),
+        });
+
+        await this.auditService.createLog(
+          {
+            entityType: 'PROJECT',
+            entityId: projectId,
+            action: AuditAction.STATUS_CHANGE,
+            userId: user.id,
+            beforeJson: { institutionalState: fromState },
+            afterJson: {
+              institutionalState: toState,
+              status: ProjectStatus.CLOSED,
+              radicationNumber: dto.radicationNumber,
+              radicatedAt: radicatedAt.toISOString(),
+            },
+          },
+          manager,
+        );
+
+        if (project.productOwner?.id) {
+          await this.notificationsService.notifyUser(
+            project.productOwner.id,
+            {
+              type: NotificationType.INFO,
+              title: 'Solicitud finalizada',
+              message: `Product registro radicado ${dto.radicationNumber} y cerro ${project.program}.`,
+              projectId,
+              eventType: NotificationEventType.PROJECT_FINALIZED,
+              actionUrl: `/projects/${projectId}`,
+            },
+            manager,
+          );
+        }
+
+        await this.notificationsService.notifyRole(
+          UserRole.FABRICA,
+          {
+            type: NotificationType.INFO,
+            title: 'Solicitud finalizada',
+            message: `La solicitud ${project.program} fue radicada y cerrada por Product.`,
+            projectId,
+            eventType: NotificationEventType.PROJECT_FINALIZED,
+            actionUrl: `/projects/${projectId}`,
+          },
+          manager,
+        );
+
+        await this.notificationsService.notifyRole(
+          UserRole.ADMIN,
+          {
+            type: NotificationType.INFO,
+            title: 'Solicitud finalizada',
+            message: `La solicitud ${project.program} fue radicada y cerrada por Product.`,
+            projectId,
+            eventType: NotificationEventType.PROJECT_FINALIZED,
+            actionUrl: `/admin/programs/${projectId}`,
+          },
+          manager,
+        );
+        return;
+      }
+
       await projectRepo.update(projectId, {
         institutionalState: toState,
         radicationNumber: dto.radicationNumber.trim(),
@@ -496,40 +598,7 @@ export class ProjectInstitutionalWorkflowService {
         await radicationRepo.save(activeRadication);
       }
 
-      const scopeSubjects = await this.loadScopeSubjects(projectId, manager);
-      const subjectRepo = manager.getRepository(SubjectEntity);
-      const checkRepo = manager.getRepository(SubjectOperationalCheckEntity);
-
-      for (const subject of scopeSubjects) {
-        if (subject.operationalState === InstitutionalOperationalState.FINALIZED) continue;
-
-        const fromSubjectState = subject.operationalState;
-        await subjectRepo.update(subject.id, {
-          operationalState: InstitutionalOperationalState.FINALIZED,
-          operationalFinalizedAt: now,
-          operationalStageEnteredAt: now,
-          operationalStageDueAt: this.slaService.computeStageDueAt(
-            now,
-            InstitutionalOperationalState.FINALIZED,
-          ),
-          status: SubjectStatus.APPROVED,
-        });
-
-        const check = await checkRepo.findOne({
-          where: {
-            subject: { id: subject.id },
-            checkKey: OperationalCheckKey.PLANNING_FINAL_RADICATED,
-          },
-        });
-        if (check) {
-          check.status = OperationalCheckStatus.CHECKED;
-          check.checkedAt = now;
-          check.checkedBy = { id: user.id } as UserEntity;
-          await checkRepo.save(check);
-        }
-      }
-
-      await this.finalizeScopeSemesters(projectId, user, manager, now);
+      await this.finalizeOperationalScope(projectId, user, manager, now);
 
       const projectRepo = manager.getRepository(ProjectEntity);
       await projectRepo.update(projectId, {
@@ -793,6 +862,47 @@ export class ProjectInstitutionalWorkflowService {
       .andWhere('sem.deletedAt IS NULL')
       .andWhere('sem.createdFromChange = false')
       .getMany();
+  }
+
+  private async finalizeOperationalScope(
+    projectId: string,
+    user: UserEntity,
+    manager: EntityManager,
+    now: Date,
+  ): Promise<void> {
+    const scopeSubjects = await this.loadScopeSubjects(projectId, manager);
+    const subjectRepo = manager.getRepository(SubjectEntity);
+    const checkRepo = manager.getRepository(SubjectOperationalCheckEntity);
+
+    for (const subject of scopeSubjects) {
+      if (subject.operationalState === InstitutionalOperationalState.FINALIZED) continue;
+
+      await subjectRepo.update(subject.id, {
+        operationalState: InstitutionalOperationalState.FINALIZED,
+        operationalFinalizedAt: now,
+        operationalStageEnteredAt: now,
+        operationalStageDueAt: this.slaService.computeStageDueAt(
+          now,
+          InstitutionalOperationalState.FINALIZED,
+        ),
+        status: SubjectStatus.APPROVED,
+      });
+
+      const check = await checkRepo.findOne({
+        where: {
+          subject: { id: subject.id },
+          checkKey: OperationalCheckKey.PLANNING_FINAL_RADICATED,
+        },
+      });
+      if (check) {
+        check.status = OperationalCheckStatus.CHECKED;
+        check.checkedAt = now;
+        check.checkedBy = { id: user.id } as UserEntity;
+        await checkRepo.save(check);
+      }
+    }
+
+    await this.finalizeScopeSemesters(projectId, user, manager, now);
   }
 
   private async finalizeScopeSemesters(

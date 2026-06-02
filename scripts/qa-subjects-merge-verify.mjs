@@ -54,6 +54,7 @@ async function main() {
     subjectMatterExpertType: 'INTERNAL',
     requestType: 'NUEVO',
     priority: 'MEDIUM',
+    expectedDeliveryDate: '2026-09-15T00:00:00.000Z',
     syllabus: { hasSyllabus: true, url: 'https://example.com/syllabus.pdf' },
     semesters: [{ semesterNumber: 1, subjects: [{ name: 'QA Subject Merge A' }] }],
   });

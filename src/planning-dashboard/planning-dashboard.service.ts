@@ -23,6 +23,7 @@ import {
   labelInstitutionalAction,
   labelProjectInstitutionalAction,
 } from './planning-action-labels';
+import { isReducedInstitutionalFlow } from '../institutional-workflow/institutional-workflow.config';
 
 const RETURNED_BY_PLANNING_STATES: InstitutionalOperationalState[] = [
   InstitutionalOperationalState.RETURNED_TO_PRODUCT_FROM_PLANNING,
@@ -76,6 +77,23 @@ export class PlanningDashboardService {
 
   async getSummary(user: UserEntity): Promise<PlanningDashboardSummaryDto> {
     this.assertPlanningAccess(user);
+
+    if (isReducedInstitutionalFlow()) {
+      const finalizedProjects = await this.loadFinalizedProjects();
+      return {
+        kpis: {
+          initialValidations: 0,
+          productionValidations: 0,
+          lmsValidations: 0,
+          radicationsPending: 0,
+          inProgress: 0,
+          finalized: finalizedProjects.length,
+        },
+        recentActivity: [],
+        returnedPreview: [],
+        finalizedProjects,
+      };
+    }
 
     const [kpis, recentActivity, returnedPreview, finalizedProjects] = await Promise.all([
       this.loadKpis(),

@@ -66,7 +66,10 @@ import { loadProductObservationCountsBySubject } from '../observations/observati
 import { deriveSubjectOperationalState } from '../factory/utils/operational-state.util';
 import { InstitutionalWorkflowService } from '../institutional-workflow/institutional-workflow.service';
 import { SemesterOperationalWorkflowService } from '../institutional-workflow/semester-operational-workflow.service';
-import { isInstitutionalWorkflowEnabled } from '../institutional-workflow/institutional-workflow.config';
+import {
+  isInstitutionalWorkflowEnabled,
+  isReducedInstitutionalFlow,
+} from '../institutional-workflow/institutional-workflow.config';
 import { statesPendingForRole } from '../institutional-workflow/institutional-workflow.transitions';
 
 interface ProjectBaseRow {
@@ -281,6 +284,9 @@ export class ProjectsService {
 
     if (user.role === UserRole.PLANEACION || user.role === UserRole.LMS) {
       const instStates = statesPendingForRole(user.role);
+      if (instStates.length === 0) {
+        return qb.andWhere('1 = 0');
+      }
       return qb
         .innerJoin('project.subjects', 'instSubject', 'instSubject.deletedAt IS NULL')
         .andWhere('project.legacyWorkflow = false')
@@ -617,7 +623,12 @@ export class ProjectsService {
       this.assertSubjectsTopicsCountIfProvided(semester.subjects);
     }
 
-    const activation = resolveActivationOnCreate(dto.subjectMatterExpertType);
+    const expectedDeliveryDate = new Date(dto.expectedDeliveryDate);
+    if (Number.isNaN(expectedDeliveryDate.getTime())) {
+      throw new BadRequestException('expectedDeliveryDate must be a valid ISO date');
+    }
+
+    const activation = resolveActivationOnCreate(expectedDeliveryDate);
 
     const projectId = await this.dataSource.transaction(async (manager) => {
       const projectRepository = manager.getRepository(ProjectEntity);
@@ -634,7 +645,7 @@ export class ProjectsService {
           modality: dto.modality,
           requestType: dto.requestType,
           priority: dto.priority,
-          subjectMatterExpertType: dto.subjectMatterExpertType,
+          subjectMatterExpertType: dto.subjectMatterExpertType ?? SubjectMatterExpertType.INTERNAL,
           subjectMatterExpertStatus: activation.subjectMatterExpertStatus,
           status: activation.status,
           progress: 0,
@@ -774,16 +785,19 @@ export class ProjectsService {
       void this.mailService.sendProductRequestCreatedEmail(detail);
     }
     if (isInstitutionalWorkflowEnabled()) {
-      const institutionalNotifyRoles = [
-        UserRole.PLANEACION,
-        UserRole.FABRICA,
-        UserRole.LMS,
-      ] as const;
+      const reducedFlow = isReducedInstitutionalFlow();
+      const institutionalNotifyRoles = reducedFlow
+        ? ([UserRole.FABRICA] as const)
+        : ([UserRole.PLANEACION, UserRole.FABRICA, UserRole.LMS] as const);
       const roleActionUrls: Record<(typeof institutionalNotifyRoles)[number], string> = {
-        [UserRole.PLANEACION]: '/planning/dashboard?filter=initial',
         [UserRole.FABRICA]: '/factory/dashboard',
-        [UserRole.LMS]: '/lms/dashboard',
-      };
+        ...(reducedFlow
+          ? {}
+          : {
+              [UserRole.PLANEACION]: '/planning/dashboard?filter=initial',
+              [UserRole.LMS]: '/lms/dashboard',
+            }),
+      } as Record<(typeof institutionalNotifyRoles)[number], string>;
       void this.dataSource
         .transaction(async (manager) => {
           for (const notifyRole of institutionalNotifyRoles) {
@@ -791,7 +805,7 @@ export class ProjectsService {
               notifyRole,
               {
                 type:
-                  notifyRole === UserRole.PLANEACION
+                  !reducedFlow && notifyRole === UserRole.PLANEACION
                     ? NotificationType.ACTION
                     : NotificationType.INFO,
                 title: 'Nueva solicitud',

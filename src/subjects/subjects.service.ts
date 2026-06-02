@@ -588,6 +588,11 @@ export class SubjectsService {
       const previousSubjectStatus = subject.status;
 
       if (dto.status === SubjectProductionStatusInput.EN_PRODUCCION) {
+        if (usesInstitutional) {
+          throw new BadRequestException(
+            'La producción del semestre debe iniciarse desde el flujo operacional del semestre',
+          );
+        }
         if (![SubjectStatus.PENDING, SubjectStatus.CHANGES_REQUESTED].includes(subject.status)) {
           throw new BadRequestException('Subject cannot start production from current status');
         }

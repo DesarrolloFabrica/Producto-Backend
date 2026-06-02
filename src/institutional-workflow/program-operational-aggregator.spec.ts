@@ -14,6 +14,7 @@ function semester(partial: Partial<SemesterOperationalWorkItemDto> & Pick<Semest
     projectId: partial.projectId,
     program: partial.program ?? 'PROGRAMA INGENIERIA',
     school: partial.school ?? 'ESCUELA',
+    productOwnerName: partial.productOwnerName ?? null,
     operationalState:
       partial.operationalState ?? InstitutionalOperationalState.IN_FACTORY_PRODUCTION,
     currentResponsibleRole: partial.currentResponsibleRole ?? UserRole.FABRICA,
@@ -24,6 +25,7 @@ function semester(partial: Partial<SemesterOperationalWorkItemDto> & Pick<Semest
     actionUrl: `/projects/${partial.projectId}/semesters/sem-${partial.semesterNumber}/operations`,
     subjectsTotal: partial.subjectsTotal ?? 2,
     subjectsReady: partial.subjectsReady ?? 0,
+    subjectsApproved: partial.subjectsApproved ?? 0,
     openObservations: partial.openObservations ?? 0,
   };
 }
@@ -49,9 +51,9 @@ describe('aggregateSemestersToPrograms', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]!.totalSemesters).toBe(2);
-    expect(result[0]!.completedSemesters).toBe(1);
+    expect(result[0]!.completedSemesters).toBe(0);
     expect(result[0]!.totalSubjects).toBe(4);
-    expect(result[0]!.completedSubjects).toBe(2);
+    expect(result[0]!.completedSubjects).toBe(0);
     expect(result[0]!.academicReviewPendingCount).toBe(1);
     expect(result[0]!.semesters).toHaveLength(2);
     expect(result[0]!.actionUrl).toBe('/projects/proj-1/operations');
