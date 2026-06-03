@@ -713,6 +713,7 @@ export class AuditService {
       [AuditAction.REJECT]: 'Rechazo',
       [AuditAction.DELIVER]: 'Entrega',
       [AuditAction.CLOSE]: 'Cierre',
+      [AuditAction.REPORT_EXPORT]: 'Exportación de reporte',
     };
     return labels[action] ?? action;
   }

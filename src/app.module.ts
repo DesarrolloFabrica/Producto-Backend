@@ -18,6 +18,7 @@ import { LmsDashboardModule } from './lms-dashboard/lms-dashboard.module';
 import { AuditModule } from './audit/audit.module';
 import { CatalogsModule } from './catalogs/catalogs.module';
 import { EmailModule } from './email/email.module';
+import { ReportingModule } from './reporting/reporting.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { EmailModule } from './email/email.module';
           AuditModule,
           CatalogsModule,
           EmailModule,
+          ReportingModule,
         ]
       : []),
   ],

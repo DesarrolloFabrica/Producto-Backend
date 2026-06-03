@@ -12,4 +12,5 @@ export enum AuditAction {
   REJECT = 'REJECT',
   DELIVER = 'DELIVER',
   CLOSE = 'CLOSE',
+  REPORT_EXPORT = 'REPORT_EXPORT',
 }
