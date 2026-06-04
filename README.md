@@ -326,6 +326,7 @@ Genera un reporte JSON en:
 | `FABRICA cannot transition checklist from PENDIENTE to ENTREGADO` | Salto de estado | Aplicar `EN_PRODUCCION` antes de `ENTREGADO` |
 | Puerto 3000 ocupado | Otra instancia del API | Detener proceso previo o cambiar `PORT` en `.env` |
 | Error de conexión PostgreSQL | Servicio detenido o credenciales | Verificar que PostgreSQL esté activo y que `DATABASE_URL` sea correcta |
+| `connect ETIMEDOUT` al arrancar | `DATABASE_URL` apunta a Cloud SQL remoto sin acceso de red | Usar VPN/red autorizada o apuntar a PostgreSQL local (`localhost`) en desarrollo |
 
 **Reinicio limpio de base (solo desarrollo):**
 
