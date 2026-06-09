@@ -15,6 +15,7 @@ export const INSTITUTIONAL_BRAND = {
 export interface InstitutionalHighlight {
   label: string;
   value: string;
+  valueHtml?: string;
 }
 
 export interface InstitutionalSection {
@@ -80,15 +81,38 @@ export function buildFrontendUrl(path: string): string {
   return `${base}${normalized}`;
 }
 
+import { getInstitutionalEmailLogoSrc } from '../email-brand-assets';
+
 export function buildInstitutionalSubject(title: string, detail?: string | null): string {
   const suffix = detail?.trim() ? `: ${detail.trim()}` : '';
   return `[Operación Académica CUN] ${title}${suffix}`;
 }
 
+export function formatSyllabusHighlight(
+  links: Array<{ type: string; url: string }> | undefined,
+): InstitutionalHighlight {
+  const syllabusLink = links?.find((link) => link.type.toUpperCase() === 'SYLLABUS');
+  const url = syllabusLink?.url?.trim();
+
+  if (url) {
+    const safeUrl = escapeHtml(url);
+    return {
+      label: 'Syllabus',
+      value: url,
+      valueHtml: `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color:${INSTITUTIONAL_BRAND.orange};font-weight:600;text-decoration:underline;">Ver syllabus</a>`,
+    };
+  }
+
+  return {
+    label: 'Syllabus',
+    value: 'No se subió link de syllabus',
+  };
+}
+
 function renderDivider(): string {
   return `
     <tr>
-      <td style="padding:0 32px;">
+      <td style="padding:20px 40px 0;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr><td style="border-top:1px solid ${INSTITUTIONAL_BRAND.divider};font-size:0;line-height:0;">&nbsp;</td></tr>
         </table>
@@ -96,30 +120,46 @@ function renderDivider(): string {
     </tr>`;
 }
 
-function renderHighlights(highlights: InstitutionalHighlight[]): string {
-  const colWidth = Math.floor(100 / highlights.length);
-  const cells = highlights
-    .map(
-      (h) => `
-        <td width="${colWidth}%" valign="top" class="stack-column" style="padding:0 8px 16px 0;">
-          <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:${INSTITUTIONAL_BRAND.textLight};text-transform:uppercase;letter-spacing:0.6px;">
-            ${escapeHtml(h.label)}
-          </p>
-          <p style="margin:0;font-size:16px;font-weight:600;color:${INSTITUTIONAL_BRAND.text};line-height:1.4;">
-            ${escapeHtml(h.value)}
-          </p>
-        </td>`,
-    )
-    .join('');
-
+function renderHighlightCell(h: InstitutionalHighlight): string {
   return `
+    <td width="50%" valign="top" class="stack-column" style="padding:0 10px 16px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+             style="background-color:${INSTITUTIONAL_BRAND.card};border:1px solid ${INSTITUTIONAL_BRAND.border};border-radius:8px;">
+        <tr>
+          <td style="padding:16px 18px;">
+            <p style="margin:0 0 8px;font-size:11px;font-weight:700;color:${INSTITUTIONAL_BRAND.textLight};text-transform:uppercase;letter-spacing:0.6px;">
+              ${escapeHtml(h.label)}
+            </p>
+            <p style="margin:0;font-size:15px;font-weight:600;color:${INSTITUTIONAL_BRAND.text};line-height:1.55;">
+              ${h.valueHtml ?? escapeHtml(h.value)}
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td>`;
+}
+
+function renderHighlights(highlights: InstitutionalHighlight[]): string {
+  const rows: InstitutionalHighlight[][] = [];
+  for (let i = 0; i < highlights.length; i += 2) {
+    rows.push(highlights.slice(i, i + 2));
+  }
+
+  return rows
+    .map((pair, rowIndex) => {
+      const cells = pair.map((h) => renderHighlightCell(h)).join('');
+      const filler = pair.length === 1 ? '<td width="50%" class="stack-column" style="padding:0;"></td>' : '';
+      const isFirstRow = rowIndex === 0;
+      return `
     <tr>
-      <td style="padding:0 32px 8px;">
+      <td style="padding:${isFirstRow ? '12px' : '0'} 40px 4px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-          <tr>${cells}</tr>
+          <tr>${cells}${filler}</tr>
         </table>
       </td>
     </tr>`;
+    })
+    .join('');
 }
 
 function renderSummary(summaryLines: string[]): string {
@@ -128,7 +168,7 @@ function renderSummary(summaryLines: string[]): string {
     .map(
       (line) => `
         <td width="${colWidth}%" valign="top" class="stack-column" style="padding:0 12px 0 0;">
-          <p style="margin:0;font-size:14px;color:${INSTITUTIONAL_BRAND.textMuted};line-height:1.5;">
+          <p style="margin:0;font-size:14px;color:${INSTITUTIONAL_BRAND.textMuted};line-height:1.65;">
             ${escapeHtml(line)}
           </p>
         </td>`,
@@ -137,8 +177,8 @@ function renderSummary(summaryLines: string[]): string {
 
   return `
     <tr>
-      <td style="padding:8px 32px 0;">
-        <p style="margin:0 0 12px;font-size:11px;font-weight:700;color:${INSTITUTIONAL_BRAND.textLight};text-transform:uppercase;letter-spacing:0.6px;">
+      <td style="padding:20px 40px 0;">
+        <p style="margin:0 0 14px;font-size:11px;font-weight:700;color:${INSTITUTIONAL_BRAND.textLight};text-transform:uppercase;letter-spacing:0.6px;">
           Resumen
         </p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -151,11 +191,11 @@ function renderSummary(summaryLines: string[]): string {
 function renderSection(section: InstitutionalSection): string {
   return `
     <tr>
-      <td style="padding:8px 32px 0;">
-        <p style="margin:0 0 12px;font-size:11px;font-weight:700;color:${INSTITUTIONAL_BRAND.textLight};text-transform:uppercase;letter-spacing:0.6px;">
+      <td style="padding:20px 40px 0;">
+        <p style="margin:0 0 14px;font-size:11px;font-weight:700;color:${INSTITUTIONAL_BRAND.textLight};text-transform:uppercase;letter-spacing:0.6px;">
           ${escapeHtml(section.title)}
         </p>
-        <div style="font-size:14px;color:${INSTITUTIONAL_BRAND.text};line-height:1.6;">
+        <div style="font-size:14px;color:${INSTITUTIONAL_BRAND.text};line-height:1.7;">
           ${section.html}
         </div>
       </td>
@@ -167,7 +207,7 @@ function renderCta(label: string, url: string): string {
   const safeLabel = escapeHtml(label);
   return `
     <tr>
-      <td align="center" style="padding:28px 32px 8px;">
+      <td align="center" style="padding:32px 40px 12px;">
         <!--[if mso]>
         <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
           href="${safeUrl}" style="height:48px;v-text-anchor:middle;width:280px;" arcsize="12%"
@@ -210,14 +250,33 @@ export function buildInstitutionalEmailLayout(
     footerNote,
   } = input;
 
+  const logoSrc = getInstitutionalEmailLogoSrc();
+  const headerLogoBlock = logoSrc
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0">
+         <tr>
+           <td valign="middle" style="padding:0 10px 0 0;">
+             <img src="${escapeHtml(logoSrc)}" alt="" width="64" class="header-logo"
+                  style="display:block;width:64px;max-width:100%;height:auto;border:0;" />
+           </td>
+           <td valign="middle">
+             <p style="margin:0;font-size:15px;font-weight:700;color:${INSTITUTIONAL_BRAND.navy};line-height:1.35;letter-spacing:0.2px;">
+               Operación Académica CUN
+             </p>
+           </td>
+         </tr>
+       </table>`
+    : `<p style="margin:0;font-size:15px;font-weight:700;color:${INSTITUTIONAL_BRAND.navy};letter-spacing:0.2px;">
+         Operación Académica CUN
+       </p>`;
+
   const eventBadge = eventLabel
-    ? `<p style="margin:0 0 8px;font-size:12px;font-weight:700;color:${INSTITUTIONAL_BRAND.orange};text-transform:uppercase;letter-spacing:0.8px;">
+    ? `<p style="margin:0 0 10px;font-size:12px;font-weight:700;color:${INSTITUTIONAL_BRAND.orange};text-transform:uppercase;letter-spacing:0.8px;">
          ${escapeHtml(eventLabel)}
        </p>`
     : '';
 
   const introBlock = intro
-    ? `<p style="margin:0 0 24px;font-size:15px;color:${INSTITUTIONAL_BRAND.textMuted};line-height:1.65;">
+    ? `<p style="margin:0 0 8px;font-size:15px;color:${INSTITUTIONAL_BRAND.textMuted};line-height:1.7;">
          ${escapeHtml(intro)}
        </p>`
     : '';
@@ -249,29 +308,34 @@ export function buildInstitutionalEmailLayout(
   <style>
     @media only screen and (max-width:620px) {
       .email-container { width:100% !important; }
-      .stack-column { display:block !important; width:100% !important; padding:0 0 12px 0 !important; }
+      .stack-column { display:block !important; width:100% !important; padding:0 0 14px 0 !important; }
+      .header-logo { width:56px !important; height:auto !important; }
     }
   </style>
 </head>
 <body style="margin:0;padding:0;background-color:${INSTITUTIONAL_BRAND.bg};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-         style="background-color:${INSTITUTIONAL_BRAND.bg};padding:32px 16px;">
+         style="background-color:${INSTITUTIONAL_BRAND.bg};padding:40px 20px;">
     <tr>
       <td align="center">
         <table role="presentation" class="email-container" width="600" cellpadding="0" cellspacing="0" border="0"
-               style="max-width:600px;width:100%;background-color:${INSTITUTIONAL_BRAND.white};border-radius:8px;overflow:hidden;
-                      box-shadow:0 2px 12px rgba(0,0,0,0.06);">
+               style="max-width:600px;width:100%;background-color:${INSTITUTIONAL_BRAND.white};border-radius:10px;overflow:hidden;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.07);">
           <tr>
-            <td bgcolor="${INSTITUTIONAL_BRAND.orange}" style="background-color:${INSTITUTIONAL_BRAND.orange};padding:28px 32px;">
-              <p style="margin:0;font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.3px;">
-                Operación Académica CUN
-              </p>
+            <td bgcolor="${INSTITUTIONAL_BRAND.white}" style="background-color:${INSTITUTIONAL_BRAND.white};padding:14px 40px;border-bottom:4px solid ${INSTITUTIONAL_BRAND.orange};">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td valign="middle" style="padding:0;">
+                    ${headerLogoBlock}
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
           <tr>
-            <td style="padding:32px 32px 8px;">
+            <td style="padding:36px 40px 12px;">
               ${eventBadge}
-              <h1 style="margin:0 0 16px;font-size:22px;font-weight:700;color:${INSTITUTIONAL_BRAND.navy};line-height:1.3;">
+              <h1 style="margin:0 0 18px;font-size:24px;font-weight:700;color:${INSTITUTIONAL_BRAND.navy};line-height:1.35;">
                 ${escapeHtml(title)}
               </h1>
               ${introBlock}
@@ -285,8 +349,8 @@ export function buildInstitutionalEmailLayout(
           ${dividerBeforeCta}
           ${ctaBlock}
           <tr>
-            <td style="padding:24px 32px 28px;background-color:${INSTITUTIONAL_BRAND.card};border-top:1px solid ${INSTITUTIONAL_BRAND.border};">
-              <p style="margin:0;font-size:12px;color:${INSTITUTIONAL_BRAND.textLight};text-align:center;line-height:1.5;">
+            <td style="padding:28px 40px 32px;background-color:${INSTITUTIONAL_BRAND.card};border-top:1px solid ${INSTITUTIONAL_BRAND.border};">
+              <p style="margin:0;font-size:12px;color:${INSTITUTIONAL_BRAND.textLight};text-align:center;line-height:1.6;">
                 ${escapeHtml(footerNote ?? 'Correo automático generado por Operación Académica CUN.')}
               </p>
             </td>
@@ -325,7 +389,7 @@ export function buildBulletList(items: string[]): { html: string; text: string }
     return { html: '<p style="margin:0;color:#9CA3AF;">—</p>', text: '—' };
   }
   return {
-    html: `<ul style="margin:0;padding:0 0 0 18px;">${items.map((item) => `<li style="margin:0 0 6px;">${escapeHtml(item)}</li>`).join('')}</ul>`,
+    html: `<ul style="margin:0;padding:0 0 0 20px;">${items.map((item) => `<li style="margin:0 0 10px;line-height:1.55;">${escapeHtml(item)}</li>`).join('')}</ul>`,
     text: items.map((item) => `• ${item}`).join('\n'),
   };
 }
@@ -344,8 +408,8 @@ export function buildSemesterStructure(
     const subjects = semester.subjects.map((s) => s.name);
     const bullets = buildBulletList(subjects);
     htmlParts.push(`
-      <div style="margin-bottom:16px;">
-        <p style="margin:0 0 8px;font-size:14px;font-weight:700;color:${INSTITUTIONAL_BRAND.text};">
+      <div style="margin-bottom:22px;padding:14px 16px;background-color:${INSTITUTIONAL_BRAND.card};border:1px solid ${INSTITUTIONAL_BRAND.border};border-radius:8px;">
+        <p style="margin:0 0 10px;font-size:14px;font-weight:700;color:${INSTITUTIONAL_BRAND.navy};">
           Semestre ${semester.semesterNumber}
         </p>
         ${bullets.html}

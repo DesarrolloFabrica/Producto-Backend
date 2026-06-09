@@ -28,6 +28,7 @@ import {
   buildInstitutionalNotificationEmail,
   getInstitutionalEventLabel,
 } from './templates/institutional-notification.template';
+import { enrichInstitutionalEmailPayload } from './email-brand-assets';
 
 export interface SendMailOptions {
   to: string;
@@ -494,12 +495,14 @@ export class EmailService {
 
     try {
       const from = deliveryMetadata.fromAddress as string;
+      const { html: enrichedHtml, attachments } = enrichInstitutionalEmailPayload(html);
       await transporter.sendMail({
         from,
         to: effectiveRecipient,
         subject,
-        html,
-        text: text ?? html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+        html: enrichedHtml,
+        text: text ?? enrichedHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+        ...(attachments.length ? { attachments } : {}),
       });
 
       this.logger.log(

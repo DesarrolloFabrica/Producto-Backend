@@ -6,6 +6,7 @@ import {
   buildSemesterStructure,
   formatDateShort,
   formatModality,
+  formatSyllabusHighlight,
 } from '../../email/templates/institutional-email-layout';
 
 export interface ProductRequestCreatedEmailContent {
@@ -48,6 +49,7 @@ export function buildProductRequestCreatedEmail(
       { label: 'Programa', value: project.program },
       { label: 'Modalidad', value: formatModality(project.modality) },
       { label: 'Entrega esperada', value: formatDateShort(project.expectedDeliveryDate) },
+      formatSyllabusHighlight(project.links),
       { label: 'Creado por', value: formatCreatedBy(project) },
     ],
     summaryLines: [
