@@ -18,6 +18,9 @@ export class UserResponseDto {
   @ApiProperty({ enum: UserStatus })
   status!: UserStatus;
 
+  @ApiProperty({ type: String, isArray: true })
+  permissions!: string[];
+
   @ApiProperty()
   createdAt!: Date;
 

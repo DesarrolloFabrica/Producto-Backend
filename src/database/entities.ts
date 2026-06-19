@@ -3,6 +3,7 @@ import { AuditLogEntity } from '../audit/audit-log.entity';
 import { StatusHistoryEntity } from '../audit/status-history.entity';
 import { ChecklistItemEntity } from '../checklist/checklist-item.entity';
 import { EmailDeliveryLogEntity } from '../email/email-delivery-log.entity';
+import { CDigitalUserEntity } from '../c-digital-users/c-digital-user.entity';
 import { NotificationEntity } from '../notifications/notification.entity';
 import { ObservationMessageEntity } from '../observations/observation-message.entity';
 import { ObservationBatchEntity } from '../observations/observation-batch.entity';
@@ -32,6 +33,7 @@ export const ALL_ENTITIES = [
   StatusHistoryEntity,
   NotificationEntity,
   EmailDeliveryLogEntity,
+  CDigitalUserEntity,
   SemesterOperationalCheckEntity,
   SemesterOperationalTransitionEntity,
 ];

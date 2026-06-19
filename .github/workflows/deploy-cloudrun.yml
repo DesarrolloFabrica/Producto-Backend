@@ -162,7 +162,7 @@ jobs:
           PLANNING_RADICATION_CHECK_BUSINESS_DAYS: "${{ vars.PLANNING_RADICATION_CHECK_BUSINESS_DAYS || '3' }}"
           EOF
 
-          SECRETS_ARG="DATABASE_URL=${{ vars.DATABASE_URL }}:latest,JWT_SECRET=${{ vars.JWT_SECRET }}:latest"
+          SECRETS_ARG="DATABASE_URL=${{ vars.DATABASE_URL }}:latest,JWT_SECRET=${{ vars.JWT_SECRET }}:latest,C_DIGITAL_USERS_ENCRYPTION_KEY=${{ vars.C_DIGITAL_USERS_ENCRYPTION_KEY || 'producto-c-digital-users-encryption-key' }}:latest"
           if [[ "${{ vars.EMAIL_ENABLED || 'false' }}" == "true" ]]; then
             if [[ -z "${{ vars.EMAIL_HOST }}" || -z "${{ vars.EMAIL_USER }}" || -z "${{ vars.EMAIL_PASSWORD }}" ]]; then
               echo "EMAIL_HOST, EMAIL_USER and EMAIL_PASSWORD GitHub variables must contain Secret Manager secret names when EMAIL_ENABLED=true."

@@ -19,6 +19,7 @@ import { AuditModule } from './audit/audit.module';
 import { CatalogsModule } from './catalogs/catalogs.module';
 import { EmailModule } from './email/email.module';
 import { ReportingModule } from './reporting/reporting.module';
+import { CDigitalUsersModule } from './c-digital-users/c-digital-users.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { ReportingModule } from './reporting/reporting.module';
           CatalogsModule,
           EmailModule,
           ReportingModule,
+          CDigitalUsersModule,
         ]
       : []),
   ],

@@ -6,6 +6,7 @@ loadEnv();
 import { UserEntity } from '../../users/user.entity';
 import { UserRole } from '../../common/enums/user-role.enum';
 import { UserStatus } from '../../common/enums/user-status.enum';
+import { PRODUCTO_C_DIGITAL_USERS_ACCESS } from '../../common/permissions';
 import * as bcrypt from 'bcrypt';
 
 type SeedUser = Pick<UserEntity, 'email' | 'name' | 'role' | 'status'>;
@@ -84,6 +85,16 @@ async function runSeed() {
         { conflictPaths: ['email'] },
       );
     }
+
+    await repo
+      .createQueryBuilder()
+      .update(UserEntity)
+      .set({
+        permissions: () =>
+          `CASE WHEN "permissions" @> ARRAY['${PRODUCTO_C_DIGITAL_USERS_ACCESS}']::text[] THEN "permissions" ELSE array_append("permissions", '${PRODUCTO_C_DIGITAL_USERS_ACCESS}') END`,
+      })
+      .where('LOWER(email) = :email', { email: 'zuany_acuna@cun.edu.co' })
+      .execute();
   } finally {
     await AppDataSource.destroy();
   }

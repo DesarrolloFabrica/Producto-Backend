@@ -19,6 +19,7 @@ export class UsersService {
       email: user.email,
       role: user.role,
       status: user.status,
+      permissions: user.permissions ?? [],
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
