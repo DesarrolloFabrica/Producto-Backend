@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { UserEntity } from '../../users/user.entity';
 import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
@@ -20,6 +20,11 @@ export class PermissionsGuard implements CanActivate {
     if (!user) return false;
 
     const userPermissions = new Set(user.permissions ?? []);
-    return requiredPermissions.every((permission) => userPermissions.has(permission));
+    const allowed = requiredPermissions.every((permission) => userPermissions.has(permission));
+    if (!allowed) {
+      throw new ForbiddenException('No tienes permiso para acceder a este recurso');
+    }
+
+    return true;
   }
 }

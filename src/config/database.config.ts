@@ -51,6 +51,7 @@ export function buildDataSourceOptions(): DataSourceOptions {
     logging: isProd ? ['error', 'warn'] : ['error', 'warn', 'schema'],
     migrationsTableName: 'typeorm_migrations',
     migrations: ['dist/database/migrations/*.js'],
+    migrationsRun: isProd && process.env.RUN_MIGRATIONS_ON_START !== 'false',
   };
 }
 
