@@ -125,6 +125,34 @@ export class ProjectListItemDto {
   subjectsSummary?: SubjectSummaryDto[];
 }
 
+class PaginationMetaDto {
+  @ApiProperty()
+  page!: number;
+
+  @ApiProperty()
+  limit!: number;
+
+  @ApiProperty()
+  total!: number;
+
+  @ApiProperty()
+  totalPages!: number;
+
+  @ApiProperty()
+  hasNextPage!: boolean;
+
+  @ApiProperty()
+  hasPreviousPage!: boolean;
+}
+
+export class PaginatedProjectListResponseDto {
+  @ApiProperty({ type: [ProjectListItemDto] })
+  items!: ProjectListItemDto[];
+
+  @ApiProperty({ type: PaginationMetaDto })
+  meta!: PaginationMetaDto;
+}
+
 export class ProjectLinkDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;

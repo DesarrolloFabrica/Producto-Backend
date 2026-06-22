@@ -6,6 +6,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -25,7 +26,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserEntity } from '../users/user.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
-import { ProjectDetailDto, ProjectListItemDto } from './dto/project-response.dto';
+import { PaginatedProjectListResponseDto, ProjectDetailDto } from './dto/project-response.dto';
+import { ProjectListQueryDto } from './dto/project-list-query.dto';
 import { AddSemesterDto } from '../semesters/dto/add-semester.dto';
 import { ObservationResponseDto } from '../observations/dto/observation-response.dto';
 import { ObservationsService } from '../observations/observations.service';
@@ -44,11 +46,14 @@ export class ProjectsController {
 
   @Get()
   @ApiOperation({ summary: 'Listar proyectos según rol del usuario' })
-  @ApiOkResponse({ type: ProjectListItemDto, isArray: true })
+  @ApiOkResponse({ type: PaginatedProjectListResponseDto })
   @ApiUnauthorizedResponse()
   @ApiForbiddenResponse()
-  async findAll(@CurrentUser() user: UserEntity): Promise<ProjectListItemDto[]> {
-    return await this.projectsService.findAll(user);
+  async findAll(
+    @CurrentUser() user: UserEntity,
+    @Query() query: ProjectListQueryDto,
+  ): Promise<PaginatedProjectListResponseDto> {
+    return await this.projectsService.findAll(user, query);
   }
 
   @Get(':projectId/observations')

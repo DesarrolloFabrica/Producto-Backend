@@ -1,10 +1,15 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
+import { AuditService } from '../audit/audit.service';
+import { AuditAction } from '../common/enums/audit-action.enum';
 import { UserEntity } from '../users/user.entity';
 import { CDigitalUserEntity } from './c-digital-user.entity';
 import { CDigitalUsersCrypto } from './c-digital-users.crypto';
-import { CDigitalUserResponseDto } from './dto/c-digital-user-response.dto';
+import {
+  CDigitalUserResponseDto,
+  PaginatedCDigitalUsersResponseDto,
+} from './dto/c-digital-user-response.dto';
 import { CreateCDigitalUserDto } from './dto/create-c-digital-user.dto';
 import { QueryCDigitalUsersDto } from './dto/query-c-digital-users.dto';
 import { UpdateCDigitalUserDto } from './dto/update-c-digital-user.dto';
@@ -15,9 +20,12 @@ export class CDigitalUsersService {
     @InjectRepository(CDigitalUserEntity)
     private readonly cDigitalUsersRepo: Repository<CDigitalUserEntity>,
     private readonly crypto: CDigitalUsersCrypto,
+    private readonly auditService: AuditService,
   ) {}
 
-  async findAll(query: QueryCDigitalUsersDto): Promise<CDigitalUserResponseDto[]> {
+  async findAll(query: QueryCDigitalUsersDto): Promise<PaginatedCDigitalUsersResponseDto> {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
     const qb = this.cDigitalUsersRepo
       .createQueryBuilder('credential')
       .leftJoinAndSelect('credential.createdBy', 'createdBy')
@@ -50,10 +58,23 @@ export class CDigitalUsersService {
       );
     }
 
-    qb.orderBy('credential.createdAt', query.order === 'oldest' ? 'ASC' : 'DESC');
+    qb.orderBy('credential.createdAt', query.order === 'oldest' ? 'ASC' : 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
 
-    const rows = await qb.getMany();
-    return rows.map((row) => this.toResponse(row));
+    const [rows, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit);
+    return {
+      items: rows.map((row) => this.toResponse(row)),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 
   async create(dto: CreateCDigitalUserDto, user: UserEntity): Promise<CDigitalUserResponseDto> {
@@ -105,6 +126,24 @@ export class CDigitalUsersService {
     await this.cDigitalUsersRepo.softRemove(credential);
   }
 
+  async revealPassword(id: string, user: UserEntity): Promise<{ password: string }> {
+    const credential = await this.findEntity(id);
+    await this.auditService.createLog({
+      entityType: 'C_DIGITAL_USER',
+      entityId: credential.id,
+      action: AuditAction.C_DIGITAL_PASSWORD_REVEALED,
+      userId: user.id,
+      beforeJson: null,
+      afterJson: {
+        programName: credential.programName,
+        username: credential.username,
+        revealedAt: new Date().toISOString(),
+      },
+    });
+
+    return { password: this.crypto.decrypt(credential.passwordEncrypted) };
+  }
+
   private async findEntity(id: string): Promise<CDigitalUserEntity> {
     const credential = await this.cDigitalUsersRepo.findOne({
       where: { id },
@@ -119,7 +158,7 @@ export class CDigitalUsersService {
       id: entity.id,
       programName: entity.programName,
       username: entity.username,
-      password: this.crypto.decrypt(entity.passwordEncrypted),
+      passwordProtected: true,
       createdBy: this.toAuditUser(entity.createdBy),
       updatedBy: entity.updatedBy ? this.toAuditUser(entity.updatedBy) : null,
       createdAt: entity.createdAt,

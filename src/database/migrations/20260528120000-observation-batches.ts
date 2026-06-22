@@ -13,7 +13,7 @@ export class ObservationBatches20260528120000 implements MigrationInterface {
 
     await queryRunner.query(`
       CREATE TABLE "observation_batches" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "projectId" uuid NOT NULL,
         "subjectId" uuid NOT NULL,
         "type" "observation_batch_type" NOT NULL,

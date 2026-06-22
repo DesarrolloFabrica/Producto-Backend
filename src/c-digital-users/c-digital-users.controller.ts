@@ -27,7 +27,11 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { PRODUCTO_C_DIGITAL_USERS_ACCESS } from '../common/permissions';
 import { UserEntity } from '../users/user.entity';
 import { CDigitalUsersService } from './c-digital-users.service';
-import { CDigitalUserResponseDto } from './dto/c-digital-user-response.dto';
+import {
+  CDigitalUserRevealPasswordResponseDto,
+  CDigitalUserResponseDto,
+  PaginatedCDigitalUsersResponseDto,
+} from './dto/c-digital-user-response.dto';
 import { CreateCDigitalUserDto } from './dto/create-c-digital-user.dto';
 import { QueryCDigitalUsersDto } from './dto/query-c-digital-users.dto';
 import { UpdateCDigitalUserDto } from './dto/update-c-digital-user.dto';
@@ -41,11 +45,22 @@ export class CDigitalUsersController {
   constructor(private readonly cDigitalUsersService: CDigitalUsersService) {}
 
   @Get()
-  @ApiOkResponse({ type: CDigitalUserResponseDto, isArray: true })
+  @ApiOkResponse({ type: PaginatedCDigitalUsersResponseDto })
   @ApiUnauthorizedResponse()
   @ApiForbiddenResponse()
-  async findAll(@Query() query: QueryCDigitalUsersDto): Promise<CDigitalUserResponseDto[]> {
+  async findAll(@Query() query: QueryCDigitalUsersDto): Promise<PaginatedCDigitalUsersResponseDto> {
     return await this.cDigitalUsersService.findAll(query);
+  }
+
+  @Get(':id/reveal-password')
+  @ApiOkResponse({ type: CDigitalUserRevealPasswordResponseDto })
+  @ApiUnauthorizedResponse()
+  @ApiForbiddenResponse()
+  async revealPassword(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<CDigitalUserRevealPasswordResponseDto> {
+    return await this.cDigitalUsersService.revealPassword(id, user);
   }
 
   @Post()

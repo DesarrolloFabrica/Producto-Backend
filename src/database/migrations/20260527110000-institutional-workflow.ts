@@ -85,7 +85,7 @@ export class InstitutionalWorkflow20260527110000 implements MigrationInterface {
 
     await queryRunner.query(`
       CREATE TABLE "subject_operational_checks" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "subjectId" uuid NOT NULL,
         "checkKey" "operational_check_key" NOT NULL,
         "label" varchar(200) NOT NULL,
@@ -107,7 +107,7 @@ export class InstitutionalWorkflow20260527110000 implements MigrationInterface {
 
     await queryRunner.query(`
       CREATE TABLE "operational_transitions" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "subjectId" uuid NOT NULL,
         "fromState" "institutional_operational_state" NULL,
         "toState" "institutional_operational_state" NOT NULL,

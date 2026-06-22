@@ -2,7 +2,6 @@
 import {
   ForbiddenException,
   Injectable,
-  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -15,7 +14,6 @@ import { JwtPayload } from './interfaces/jwt-payload.interface';
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
   private readonly googleClient: OAuth2Client | null;
 
   constructor(
@@ -97,19 +95,11 @@ export class AuthService {
     const devEnabled = this.isDevEmailLoginEnabled();
     const normalizedEmail = this.normalizeEmail(rawEmail);
 
-    this.logger.log(
-      `[dev-email] enabled=${devEnabled} raw="${rawEmail}" normalized="${normalizedEmail}"`,
-    );
-
     if (!devEnabled) {
       throw new ForbiddenException('Login por correo deshabilitado.');
     }
 
     const user = await this.usersService.findActiveByEmail(normalizedEmail);
-
-    this.logger.log(
-      `[dev-email] found=${Boolean(user)} status=${user?.status ?? 'n/a'} email=${user?.email ?? 'n/a'}`,
-    );
 
     if (!user) {
       throw new ForbiddenException(
@@ -125,6 +115,9 @@ export class AuthService {
   }
 
   private isDevEmailLoginEnabled(): boolean {
+    if (this.config.get<string>('NODE_ENV') === 'production') {
+      return false;
+    }
     const fromConfig = this.config.get<string>('AUTH_DEV_EMAIL_LOGIN_ENABLED');
     const fromEnv = process.env.AUTH_DEV_EMAIL_LOGIN_ENABLED;
     return fromConfig === 'true' || fromEnv === 'true';

@@ -61,7 +61,7 @@ export class SemesterOperationalWorkflow20260602120000 implements MigrationInter
 
     await queryRunner.query(`
       CREATE TABLE "semester_operational_checks" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "semesterId" uuid NOT NULL,
         "checkKey" "operational_check_key" NOT NULL,
         "label" varchar(200) NOT NULL,
@@ -82,7 +82,7 @@ export class SemesterOperationalWorkflow20260602120000 implements MigrationInter
 
     await queryRunner.query(`
       CREATE TABLE "semester_operational_transitions" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "semesterId" uuid NOT NULL,
         "fromState" "institutional_operational_state" NULL,
         "toState" "institutional_operational_state" NOT NULL,

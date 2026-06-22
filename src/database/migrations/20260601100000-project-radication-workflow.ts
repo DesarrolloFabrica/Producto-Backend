@@ -62,7 +62,7 @@ export class ProjectRadicationWorkflow20260601100000 implements MigrationInterfa
 
     await queryRunner.query(`
       CREATE TABLE "project_radications" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "projectId" uuid NOT NULL,
         "radicationNumber" varchar(120) NOT NULL,
         "radicatedAt" TIMESTAMPTZ NOT NULL,
@@ -90,7 +90,7 @@ export class ProjectRadicationWorkflow20260601100000 implements MigrationInterfa
 
     await queryRunner.query(`
       CREATE TABLE "project_operational_transitions" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "projectId" uuid NOT NULL,
         "fromState" "project_institutional_state" NULL,
         "toState" "project_institutional_state" NOT NULL,

@@ -10,7 +10,7 @@ export class EmailDeliveryLogs20260529120000 implements MigrationInterface {
 
     await queryRunner.query(`
       CREATE TABLE "email_delivery_logs" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "notificationId" uuid,
         "eventType" character varying(80),
         "originalRecipient" character varying(254) NOT NULL,

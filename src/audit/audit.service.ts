@@ -714,6 +714,7 @@ export class AuditService {
       [AuditAction.DELIVER]: 'Entrega',
       [AuditAction.CLOSE]: 'Cierre',
       [AuditAction.REPORT_EXPORT]: 'Exportación de reporte',
+      [AuditAction.C_DIGITAL_PASSWORD_REVEALED]: 'Revelación de contraseña C Digital',
     };
     return labels[action] ?? action;
   }

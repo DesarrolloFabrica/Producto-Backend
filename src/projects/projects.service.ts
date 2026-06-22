@@ -47,6 +47,7 @@ import {
 } from '../common/utils/project-sme.util';
 import {
   ChecklistItemDto,
+  PaginatedProjectListResponseDto,
   ProjectDetailDto,
   ProjectLinkDto,
   ProjectListItemDto,
@@ -56,6 +57,7 @@ import {
   SubjectSummaryDto,
   TopicDetailDto,
 } from './dto/project-response.dto';
+import { ProjectListQueryDto } from './dto/project-list-query.dto';
 import { ProjectChangeTimelineEntryDto } from './dto/project-change-tracking.dto';
 import { LinkResourceEntity } from './link-resource.entity';
 import { MailService } from '../mail/mail.service';
@@ -297,10 +299,14 @@ export class ProjectsService {
     throw new ForbiddenException();
   }
 
-  async findAll(user: UserEntity): Promise<ProjectListItemDto[]> {
-    const projects = await this.buildProjectQueryByRole(user)
+  async findAll(user: UserEntity, query: ProjectListQueryDto = {}): Promise<PaginatedProjectListResponseDto> {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const [projects, total] = await this.buildProjectQueryByRole(user)
       .orderBy('project.createdAt', 'DESC')
-      .getMany();
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
 
     const includeSubjectsSummary =
       user.role === UserRole.FABRICA ||
@@ -312,12 +318,23 @@ export class ProjectsService {
       ? await this.loadSubjectsSummaryForProjects(projects.map((p) => p.id))
       : new Map<string, SubjectSummaryDto[]>();
 
-    return projects.map((p) => ({
-      ...this.toListItem(p),
-      ...(includeSubjectsSummary
-        ? { subjectsSummary: summariesByProject.get(p.id) ?? [] }
-        : {}),
-    }));
+    const totalPages = Math.ceil(total / limit);
+    return {
+      items: projects.map((p) => ({
+        ...this.toListItem(p),
+        ...(includeSubjectsSummary
+          ? { subjectsSummary: summariesByProject.get(p.id) ?? [] }
+          : {}),
+      })),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 
   private async loadSubjectsSummaryForProjects(

@@ -10,7 +10,7 @@ export class CDigitalUsers20260619120000 implements MigrationInterface {
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "c_digital_users" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "program_name" character varying(220) NOT NULL,
         "username" character varying(220) NOT NULL,
         "password_encrypted" text NOT NULL,

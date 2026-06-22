@@ -10,6 +10,10 @@ import { ObservationBatchEntity } from '../observations/observation-batch.entity
 import { ObservationEntity } from '../observations/observation.entity';
 import { SemesterOperationalCheckEntity } from '../institutional-workflow/semester-operational-check.entity';
 import { SemesterOperationalTransitionEntity } from '../institutional-workflow/semester-operational-transition.entity';
+import { OperationalTransitionEntity } from '../institutional-workflow/operational-transition.entity';
+import { SubjectOperationalCheckEntity } from '../institutional-workflow/subject-operational-check.entity';
+import { ProjectOperationalTransitionEntity } from '../project-radication/project-operational-transition.entity';
+import { ProjectRadicationEntity } from '../project-radication/project-radication.entity';
 import { LinkResourceEntity } from '../projects/link-resource.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { SemesterEntity } from '../semesters/semester.entity';
@@ -36,4 +40,8 @@ export const ALL_ENTITIES = [
   CDigitalUserEntity,
   SemesterOperationalCheckEntity,
   SemesterOperationalTransitionEntity,
+  SubjectOperationalCheckEntity,
+  OperationalTransitionEntity,
+  ProjectRadicationEntity,
+  ProjectOperationalTransitionEntity,
 ];

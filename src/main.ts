@@ -12,9 +12,21 @@ async function bootstrap() {
   const config = app.get(ConfigService);
   const port = Number(config.get('PORT') ?? 3000);
   const corsOrigin = config.get<string>('CORS_ORIGIN');
+  const isProduction = config.get<string>('NODE_ENV') === 'production';
+
+  if (isProduction && !corsOrigin) {
+    throw new Error('CORS_ORIGIN is required when NODE_ENV=production');
+  }
+
+  const allowedOrigins = corsOrigin
+    ? corsOrigin
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : true;
 
   app.enableCors({
-    origin: corsOrigin ? corsOrigin.split(',').map((s) => s.trim()) : true,
+    origin: allowedOrigins,
     credentials: true,
   });
 
@@ -26,21 +38,24 @@ async function bootstrap() {
     }),
   );
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Producto-Backend')
-    .setDescription('API Backend (NestJS + TypeORM + PostgreSQL)')
-    .setVersion('0.1.0')
-    .addBearerAuth(
-      {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-      },
-      'bearer',
-    )
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
+  const swaggerEnabled = !isProduction && config.get<string>('SWAGGER_ENABLED') !== 'false';
+  if (swaggerEnabled) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Producto-Backend')
+      .setDescription('API Backend (NestJS + TypeORM + PostgreSQL)')
+      .setVersion('0.1.0')
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+        'bearer',
+      )
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document);
+  }
 
   await app.listen(port);
 }
