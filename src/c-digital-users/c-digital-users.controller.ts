@@ -21,10 +21,10 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { RequirePermissions } from '../auth/decorators/permissions.decorator';
+import { RequireAnyPermissions } from '../auth/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
-import { PRODUCTO_C_DIGITAL_USERS_ACCESS } from '../common/permissions';
+import { C_DIGITAL_USERS_PERMISSIONS } from '../common/permissions';
 import { UserEntity } from '../users/user.entity';
 import { CDigitalUsersService } from './c-digital-users.service';
 import {
@@ -40,7 +40,7 @@ import { UpdateCDigitalUserDto } from './dto/update-c-digital-user.dto';
 @ApiBearerAuth('bearer')
 @Controller('c-digital-users')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
-@RequirePermissions(PRODUCTO_C_DIGITAL_USERS_ACCESS)
+@RequireAnyPermissions(...C_DIGITAL_USERS_PERMISSIONS)
 export class CDigitalUsersController {
   constructor(private readonly cDigitalUsersService: CDigitalUsersService) {}
 
